@@ -1,0 +1,3 @@
+# Jangan ikut di-deploy: berisi data pribadi (file backup)
+Backup WorkTrack/
+*.json

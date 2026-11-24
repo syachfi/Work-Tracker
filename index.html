@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorkTrack — Task & Meeting Calendar</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-type="all">
+
+<!-- ============ HEADER (sticky) ============ -->
+<header class="appbar" id="appbar">
+  <div class="appbar-top">
+    <div class="brand"><span class="logo">✓</span><span>WorkTrack</span></div>
+    <div class="appbar-actions">
+      <button type="button" class="backup-pill" id="backupPill" hidden></button>
+      <button type="button" class="backup-pill" id="drivePill" hidden></button>
+      <button class="icon-btn settings-btn" id="settingsBtn" title="Settings & data">⚙️</button>
+    </div>
+  </div>
+
+  <div class="summary-panel">
+    <span class="summary-label">Today's<br>summary</span>
+    <div class="bubbles" id="todayBubbles"></div>
+  </div>
+</header>
+
+<main class="main">
+  <div class="cal-layout">
+    <!-- ============ PANEL KIRI ============ -->
+    <aside class="cal-panel">
+      <div class="panel-block list-panel">
+        <div class="panel-head">
+          <span class="panel-title" id="listTitle">Agenda List</span>
+          <span class="badge gray" id="listCount">0</span>
+        </div>
+        <div class="seg" id="listScope">
+          <button data-scope="active" class="active" title="Unfinished tasks & upcoming meetings">Active</button>
+          <button data-scope="month">Selected month</button>
+        </div>
+        <label class="check small only-task"><input type="checkbox" id="showDone"> Show completed tasks</label>
+        <div class="side-list" id="sideList"></div>
+      </div>
+    </aside>
+
+    <!-- ============ KALENDER ============ -->
+    <div class="cal-main">
+      <div class="topbar">
+        <div class="month-nav">
+          <button class="icon-btn" id="prevMonth" title="Previous month">‹</button>
+          <div class="month-picker-wrap">
+            <button class="month-label" id="monthLabel" title="Choose month & year" aria-haspopup="true" aria-expanded="false">
+              <span id="monthLabelText"></span><span class="caret">▾</span>
+            </button>
+            <div class="month-picker" id="monthPicker" hidden>
+              <div class="mp-head">
+                <button class="icon-btn sm" id="prevYear" title="Previous year">‹</button>
+                <b id="pickerYear"></b>
+                <button class="icon-btn sm" id="nextYear" title="Next year">›</button>
+              </div>
+              <div class="month-list" id="monthList"></div>
+            </div>
+          </div>
+          <button class="icon-btn" id="nextMonth" title="Next month">›</button>
+          <button class="btn ghost" id="todayBtn">Today</button>
+        </div>
+        <div class="seg type-filter" id="typeFilter" title="Filter by agenda type">
+          <button data-type="all" class="active">🗂️ All Agenda</button>
+          <button data-type="task">📋 Task</button>
+          <button data-type="meeting">👥 Meeting</button>
+        </div>
+      </div>
+
+      <div class="toolbar-row">
+        <div class="toolbar">
+          <input type="search" id="search" placeholder="Search agenda...">
+          <select id="statusFilter" class="only-task" title="Task status">
+            <option value="">All statuses</option>
+            <option value="todo">To Do</option>
+            <option value="progress">In Progress</option>
+            <option value="done">Done</option>
+            <option value="overdue">Overdue</option>
+          </select>
+          <select id="priorityFilter" class="only-task" title="Task priority">
+            <option value="">All priorities</option>
+            <option value="high">High</option>
+            <option value="med">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <select id="categoryFilter" class="only-task" title="Task category"></select>
+          <select id="meetingStatusFilter" class="only-meeting" title="Meeting status">
+            <option value="">All meetings</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="done">Done</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
+        <div class="new-menu-wrap">
+          <button class="btn primary" id="newBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="newMenu">
+            + New <span class="caret">▾</span>
+          </button>
+          <div class="new-menu" id="newMenu" role="menu" hidden>
+            <button type="button" role="menuitem" class="only-task" data-new="task">
+              <span class="am-icon task">📋</span>
+              <span><b>Task</b><small>To-do with a date & priority</small></span>
+            </button>
+            <button type="button" role="menuitem" class="only-meeting" data-new="meeting">
+              <span class="am-icon meeting">👥</span>
+              <span><b>Meeting</b><small>Schedule, attendees & minutes</small></span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats" id="stats"></div>
+
+      <div class="calendar">
+        <div class="weekdays">
+          <div>Monday</div><div>Tuesday</div><div>Wednesday</div><div>Thursday</div><div>Friday</div><div>Saturday</div><div>Sunday</div>
+        </div>
+        <div class="days" id="calendarGrid"></div>
+      </div>
+
+      <div class="legend">
+        <span class="only-task"><i class="lg high"></i>High priority</span>
+        <span class="only-task"><i class="lg med"></i>Medium</span>
+        <span class="only-task"><i class="lg low"></i>Low</span>
+        <span class="only-meeting"><i class="lg meeting"></i>Scheduled meeting</span>
+        <span class="only-meeting"><i class="lg mdone"></i>Completed meeting</span>
+        <span class="tip">Click <b>+</b> / double-click a date to add · drag an item to move it to another date</span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Menu pilihan tambah (muncul saat filter "All Agenda") -->
+<div class="add-menu" id="addMenu" hidden>
+  <div class="add-menu-title" id="addMenuTitle"></div>
+  <button data-add="task">📋 Add Task</button>
+  <button data-add="meeting">👥 Schedule Meeting</button>
+</div>
+
+<!-- ============ DIALOG: TASK ============ -->
+<dialog id="taskDialog" class="dialog">
+  <form id="taskForm" class="dialog-form" novalidate>
+    <div class="dialog-head">
+      <h2 id="taskDialogTitle">Add Task</h2>
+      <button type="button" class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="dialog-body">
+      <p class="req-note">Fields marked <span class="req">*</span> are required.</p>
+      <input type="hidden" id="t-id">
+      <label class="field"><span>Task title <span class="req">*</span></span>
+        <input id="t-title" required data-label="Task title" maxlength="150" placeholder="e.g. Prepare monthly report">
+      </label>
+      <div class="grid-2">
+        <label class="field"><span>Date (deadline) <span class="req">*</span></span>
+          <input type="date" id="t-date" required data-label="Date">
+        </label>
+        <label class="field">Time (optional)
+          <input type="time" id="t-time">
+        </label>
+      </div>
+      <div class="grid-2">
+        <label class="field">Priority
+          <select id="t-priority">
+            <option value="high">High</option>
+            <option value="med">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+        <label class="field">Status
+          <select id="t-status">
+            <option value="todo">To Do</option>
+            <option value="progress">In Progress</option>
+            <option value="done">Done</option>
+          </select>
+        </label>
+      </div>
+      <label class="field"><span>Project <span class="req">*</span></span>
+        <select id="t-category" required data-label="Project"></select>
+      </label>
+      <label class="field">Description / Notes
+        <textarea id="t-desc" rows="4" placeholder="Task details, document links, etc."></textarea>
+      </label>
+    </div>
+    <div class="dialog-foot">
+      <button type="button" class="btn danger-ghost" id="deleteTaskBtn">Delete</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="taskSubmitBtn">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ============ DIALOG: DETAIL HARI ============ -->
+<dialog id="dayDialog" class="dialog">
+  <div class="dialog-form">
+    <div class="dialog-head">
+      <h2 id="dayTitle"></h2>
+      <button type="button" class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="dialog-body" id="dayBody"></div>
+    <div class="dialog-foot">
+      <button type="button" class="btn ghost" id="dayAddMeeting">+ Meeting</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn primary" id="dayAddTask">+ Task</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ============ DIALOG: FORM MEETING ============ -->
+<dialog id="meetingDialog" class="dialog wide">
+  <form id="meetingForm" class="dialog-form" novalidate>
+    <div class="dialog-head">
+      <h2 id="meetingDialogTitle">Add Meeting</h2>
+      <button type="button" class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="dialog-body">
+      <p class="req-note">Fields marked <span class="req">*</span> are required. Minutes & outcomes can be filled in later.</p>
+      <input type="hidden" id="m-id">
+
+      <div class="form-section">Basic Information</div>
+      <label class="field"><span>Meeting title <span class="req">*</span></span>
+        <input id="m-title" required data-label="Meeting title" maxlength="150" placeholder="e.g. Attendance System Project Kick-off">
+      </label>
+      <div class="grid-3">
+        <label class="field"><span>Date <span class="req">*</span></span>
+          <input type="date" id="m-date" required data-label="Date">
+        </label>
+        <label class="field">Start
+          <input type="time" id="m-start">
+        </label>
+        <label class="field">End
+          <input type="time" id="m-end">
+        </label>
+      </div>
+      <div class="grid-3">
+        <label class="field">Type
+          <select id="m-type">
+            <option value="offline">Offline (in person)</option>
+            <option value="online">Online</option>
+            <option value="hybrid">Hybrid</option>
+          </select>
+        </label>
+        <label class="field span-2">Location / Meeting link
+          <input id="m-location" placeholder="Meeting Room 3F / https://meet.google.com/...">
+        </label>
+      </div>
+      <div class="grid-3">
+        <label class="field">Organizer / Chair
+          <input id="m-organizer" placeholder="Name">
+        </label>
+        <label class="field">Note-taker
+          <input id="m-notetaker" placeholder="Note-taker's name">
+        </label>
+        <label class="field">Status
+          <select id="m-status">
+            <option value="scheduled">Scheduled</option>
+            <option value="done">Done</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </label>
+      </div>
+      <label class="field">Attendees <small>(separate with commas or new lines)</small>
+        <textarea id="m-participants" rows="2" placeholder="Andi, Budi, Citra"></textarea>
+      </label>
+
+      <div class="form-section">Objective & Agenda</div>
+      <label class="field">Meeting objective
+        <textarea id="m-objective" rows="2" placeholder="What should this meeting achieve?"></textarea>
+      </label>
+      <label class="field">Agenda <small>(one item per line)</small>
+        <textarea id="m-agenda" rows="3" placeholder="Opening&#10;Progress review&#10;Closing"></textarea>
+      </label>
+
+      <div class="form-section">Meeting Outcomes</div>
+      <label class="field">Minutes / Discussion notes
+        <textarea id="m-minutes" rows="7" placeholder="Write down the discussion points during the meeting..."></textarea>
+      </label>
+      <label class="field">Decisions / Conclusions <small>(one item per line)</small>
+        <textarea id="m-decisions" rows="3" placeholder="Agreed decisions"></textarea>
+      </label>
+
+      <div class="field">Action Items / Follow-ups
+        <div id="actionRows" class="action-rows"></div>
+        <button type="button" class="btn ghost small" id="addActionRow">+ Add action item</button>
+      </div>
+
+      <label class="field">Next meeting date (optional)
+        <input type="date" id="m-next">
+      </label>
+    </div>
+    <div class="dialog-foot">
+      <button type="button" class="btn danger-ghost" id="deleteMeetingBtn">Delete</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="meetingSubmitBtn">Save Meeting</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ============ DIALOG: DETAIL MEETING ============ -->
+<dialog id="meetingDetailDialog" class="dialog wide">
+  <div class="dialog-form">
+    <div class="dialog-head">
+      <h2>Meeting Details</h2>
+      <button type="button" class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="dialog-body md-body" id="mdBody"></div>
+  </div>
+</dialog>
+
+<!-- ============ DIALOG: DAFTAR ACTION ITEM ============ -->
+<dialog id="aiDialog" class="dialog">
+  <div class="dialog-form">
+    <div class="dialog-head">
+      <h2>📌 Action Items</h2>
+      <button type="button" class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="dialog-body">
+      <div class="seg" id="aiScope">
+        <button data-scope="open" class="active">All open</button>
+        <button data-scope="late">Overdue</button>
+      </div>
+      <div id="aiList"></div>
+    </div>
+  </div>
+</dialog>
+
+<!-- ============ DIALOG: PENGATURAN ============ -->
+<dialog id="settingsDialog" class="dialog">
+  <div class="dialog-form">
+    <div class="dialog-head">
+      <h2>⚙️ Settings</h2>
+      <button type="button" class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="dialog-body">
+      <div class="setting-info" id="dataInfo"></div>
+
+      <div class="setting-group-title">Master Data</div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-title">Task categories</div>
+          <div class="setting-desc">Categories you pick when creating a task, also used for filtering.</div>
+          <div class="cat-summary" id="catSummary"></div>
+        </div>
+        <button class="btn primary" id="manageCatBtn">🏷️ Manage Categories</button>
+      </div>
+
+      <div class="setting-group-title">Backup</div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-title">Automatic backup to file</div>
+          <div class="setting-desc" id="backupDesc"></div>
+        </div>
+        <div class="setting-actions" id="backupActions"></div>
+      </div>
+
+      <div class="setting-row stacked">
+        <div class="setting-head">
+          <div>
+            <div class="setting-title">Automatic backup to Google Drive</div>
+            <div class="setting-desc" id="driveDesc"></div>
+          </div>
+          <div class="setting-actions" id="driveActions"></div>
+        </div>
+        <form class="drive-form" id="driveForm" novalidate>
+          <input id="driveUrl" type="url" placeholder="Web App URL (https://script.google.com/macros/s/.../exec)" autocomplete="off" spellcheck="false">
+          <div class="drive-token">
+            <input id="driveToken" type="password" placeholder="Secret code (token)" autocomplete="off" spellcheck="false">
+            <button type="button" class="btn ghost" id="driveGenBtn" title="Generate a random token & copy it">🎲 Generate token</button>
+            <button type="submit" class="btn primary" id="driveSaveBtn">Save & test</button>
+          </div>
+          <div class="setting-note">Setup guide is in <b>google-drive-backup.gs</b> (in this app's folder).</div>
+        </form>
+      </div>
+
+      <div class="setting-group-title">Data</div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-title">Export data (backup)</div>
+          <div class="setting-desc">Download all tasks & meetings as a JSON file. Do this regularly to keep your data safe.</div>
+        </div>
+        <button class="btn ghost" id="exportBtn">⬇ Export</button>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-title">Import data</div>
+          <div class="setting-desc">Restore from an export file or the automatic backup file. Current data will be <b>replaced</b>.</div>
+        </div>
+        <label class="btn ghost">⬆ Import
+          <input type="file" id="importInput" accept=".json,application/json" hidden>
+        </label>
+      </div>
+
+      <div class="setting-row danger">
+        <div>
+          <div class="setting-title">Delete all data</div>
+          <div class="setting-desc">Remove all tasks & meetings. This cannot be undone — export first if needed.</div>
+        </div>
+        <button class="btn danger-ghost" id="resetBtn">Delete All</button>
+      </div>
+
+      <p class="setting-note">Your main data is stored in this browser (localStorage). If browser data is cleared, restore it via <b>Import</b> using the automatic backup file.</p>
+    </div>
+  </div>
+</dialog>
+
+<!-- ============ DIALOG: MASTER KATEGORI ============ -->
+<dialog id="categoryDialog" class="dialog">
+  <div class="dialog-form">
+    <div class="dialog-head">
+      <h2>🏷️ Categories <span class="badge gray" id="catCount">0</span></h2>
+      <button type="button" class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="dialog-body">
+      <form id="catAddForm" class="field" novalidate>
+        <label for="catName">New category <span class="req">*</span></label>
+        <div class="cat-add">
+          <input type="color" id="catColor" title="Category color">
+          <input id="catName" required data-label="Category name" maxlength="40" placeholder="Category name, e.g. Project A" autocomplete="off">
+          <button type="submit" class="btn primary" id="catAddBtn">+ Add</button>
+        </div>
+      </form>
+      <p class="setting-note">Click a name or color to change it. Changes are saved instantly.</p>
+      <div class="cat-list" id="catList"></div>
+    </div>
+    <div class="dialog-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn primary" data-close>Done</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Area khusus cetak notulen -->
+<div id="printArea" class="meeting-detail"></div>
+
+<!-- ============ DIALOG: KONFIRMASI ============ -->
+<dialog id="confirmDialog" class="dialog confirm" data-static>
+  <div class="dialog-form">
+    <div class="confirm-body">
+      <div class="confirm-icon" id="confirmIcon">!</div>
+      <div>
+        <h2 id="confirmTitle"></h2>
+        <p id="confirmMsg"></p>
+      </div>
+    </div>
+    <div class="dialog-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost" id="confirmCancel">Cancel</button>
+      <button type="button" class="btn danger" id="confirmOk">Yes</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ============ LOADING ============ -->
+<dialog id="loadingDialog" class="loading-dialog" data-static aria-live="polite">
+  <div class="spinner"></div>
+  <div id="loadingText">Processing...</div>
+</dialog>
+
+<!-- Notifikasi (popover agar tampil di atas popup lain) -->
+<div id="notifications" class="notif-stack" popover="manual" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

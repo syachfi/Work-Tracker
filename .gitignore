@@ -1,0 +1,3 @@
+# Data pribadi (file backup) — jangan masuk Git / Vercel
+Backup WorkTrack/
+*.json

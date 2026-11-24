@@ -162,6 +162,13 @@ grant execute on function public.list_users() to authenticated;
 grant execute on function public.set_user_role(uuid, text) to authenticated;
 grant execute on function public.remove_user(uuid) to authenticated;
 
+-- ---------- API access (needed when "Grant API access to new tables automatically" is OFF) ----------
+-- What each role may actually do is still decided by the RLS policies above.
+grant usage on schema public to anon, authenticated;
+grant select on public.categories, public.tasks, public.meetings to anon, authenticated;
+grant insert, update, delete on public.categories, public.tasks, public.meetings to authenticated;
+grant select on public.profiles to authenticated;
+
 -- ---------- Live updates (other people see changes without refreshing) ----------
 do $$
 declare t text;

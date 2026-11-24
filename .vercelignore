@@ -3,3 +3,4 @@ Backup WorkTrack/
 worktrack*.json
 supabase/
 google-drive-backup.gs
+supabase-drive-backup.gs

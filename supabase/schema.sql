@@ -169,6 +169,71 @@ grant select on public.categories, public.tasks, public.meetings to anon, authen
 grant insert, update, delete on public.categories, public.tasks, public.meetings to authenticated;
 grant select on public.profiles to authenticated;
 
+-- ---------- Daily backup status (shown to admins in the app) ----------
+-- The Google Apps Script (supabase-drive-backup.gs) reports each daily backup here,
+-- proving itself with a secret "backup key". Only a hash of that key is stored.
+create schema if not exists private;
+revoke all on schema private from public, anon, authenticated;
+
+create table if not exists private.backup_token (
+  id          int primary key default 1 check (id = 1),
+  token_hash  text not null,
+  created_at  timestamptz not null default now()
+);
+
+create table if not exists public.backup_log (
+  id          bigint generated always as identity primary key,
+  ran_at      timestamptz not null default now(),
+  ok          boolean not null,
+  tasks       int,
+  meetings    int,
+  categories  int,
+  message     text
+);
+alter table public.backup_log enable row level security;
+drop policy if exists "admin read backup log" on public.backup_log;
+create policy "admin read backup log" on public.backup_log
+  for select to authenticated using (public.my_role() in ('admin', 'super_admin'));
+revoke insert, update, delete, truncate, references, trigger on public.backup_log from anon, authenticated;
+grant select on public.backup_log to authenticated;
+
+-- Admin creates (or replaces) the backup key. The key is shown ONCE; only its hash is kept.
+create or replace function public.new_backup_token()
+returns text language plpgsql volatile security definer set search_path = '' as $$
+declare t text;
+begin
+  if public.my_role() not in ('admin', 'super_admin') then
+    raise exception 'Only admins can create a backup key.' using errcode = '42501';
+  end if;
+  t := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+  insert into private.backup_token (id, token_hash)
+  values (1, encode(sha256(convert_to(t, 'UTF8')), 'hex'))
+  on conflict (id) do update set token_hash = excluded.token_hash, created_at = now();
+  return t;
+end $$;
+
+-- Called by the backup script after each run
+create or replace function public.log_backup(
+  p_token text, p_ok boolean,
+  p_tasks int default null, p_meetings int default null, p_categories int default null,
+  p_message text default null)
+returns void language plpgsql volatile security definer set search_path = '' as $$
+begin
+  if p_token is null or not exists (
+    select 1 from private.backup_token
+    where token_hash = encode(sha256(convert_to(p_token, 'UTF8')), 'hex')) then
+    raise exception 'Invalid backup key.' using errcode = '42501';
+  end if;
+  insert into public.backup_log (ok, tasks, meetings, categories, message)
+  values (p_ok, p_tasks, p_meetings, p_categories, left(p_message, 500));
+  delete from public.backup_log where ran_at < now() - interval '90 days';
+end $$;
+
+revoke execute on function public.new_backup_token() from public, anon;
+grant execute on function public.new_backup_token() to authenticated;
+revoke execute on function public.log_backup(text, boolean, int, int, int, text) from public;
+grant execute on function public.log_backup(text, boolean, int, int, int, text) to anon, authenticated;
+
 -- ---------- Live updates (other people see changes without refreshing) ----------
 do $$
 declare t text;

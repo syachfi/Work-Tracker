@@ -151,7 +151,6 @@
   function save() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     scheduleBackup();
-    scheduleDrive();
   }
 
   function loadUi() {
@@ -313,7 +312,6 @@
       try {
         await cloudSync(ops);
         scheduleBackup();
-        scheduleDrive();
       } catch (err) {
         console.error(err);
         notify('error', `${error} ${cloudErrorText(err)}`);
@@ -1457,7 +1455,7 @@
       ? sortedCats().map(c => `<span class="cat-tag pill" style="--c:${esc(c.color)}"><i></i>${esc(c.name)}</span>`).join('')
       : '<span class="placeholder">No categories yet</span>';
   }
-  const openSettings = () => { renderDataInfo(); renderBackupStatus(); renderDriveStatus(); fillDriveForm(); settingsDialog.showModal(); };
+  const openSettings = () => { renderDataInfo(); renderBackupStatus(); renderServerBackup(); loadServerBackup(); settingsDialog.showModal(); };
   $('#settingsBtn').addEventListener('click', openSettings);
   $('#manageCatBtn').addEventListener('click', () => openCategoryManager());
 
@@ -1694,7 +1692,8 @@
       saving: ['', '💾 Saving...', ''],
       ok: ['ok', `💾 File ✓ ${last}`, `Backup file saved: ${backup.handle?.name}`]
     };
-    pill.hidden = st === 'unsupported';
+    // Mode online: backup utama = backup harian di server, jadi tanda di header hanya muncul jika perlu tindakan
+    pill.hidden = st === 'unsupported' || (CLOUD && st !== 'paused' && st !== 'error');
     if (PILL[st]) {
       const [cls, text, title] = PILL[st];
       pill.className = `backup-pill ${cls}`;
@@ -1706,7 +1705,7 @@
     // Bagian di Pengaturan
     const DESC = {
       unsupported: 'This browser does not support automatic backup to a file. Use <b>Chrome</b> or <b>Edge</b>, or export regularly.',
-      off: 'Pick a file on your laptop (e.g. in Documents). Every change is saved to that file automatically.',
+      off: 'Off. Pick a file (e.g. in Documents) and every change you make in this browser is saved to it.',
       paused: `File: <b>${name}</b><br>The browser asks for permission again after it is reopened. Click <b>Resume</b> to allow it.`,
       error: `File: <b>${name}</b><br><span class="txt-danger">Could not write the file. It may have been moved or deleted — click Retry or choose another file.</span>`,
       saving: `File: <b>${name}</b><br>Saving...`,
@@ -1869,7 +1868,6 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'hidden') return;
     if (backup.timer) writeBackup();
-    if (drive.timer) uploadDrive({ keepalive: true });
   });
 
   async function initBackup() {
@@ -1896,229 +1894,7 @@
     } else if (freshStart) {
       notify('info', 'There is no data in this browser yet. If you have a backup file, restore it via ⚙️ Settings → Import.', 'No data');
     }
-
-    renderDriveStatus();
-    if (backup.meta.driveDirty && !freshStart) uploadDrive(); // sisa perubahan yang belum terkirim
   }
-
-  /* ================= BACKUP OTOMATIS KE GOOGLE DRIVE (Apps Script) ================= */
-  // Data dikirim ke Web App Google Apps Script milik pengguna (lihat google-drive-backup.gs),
-  // yang menyimpannya ke folder Drive. Tidak perlu login/OAuth di aplikasi ini.
-  const DRIVE_DELAY = 10000;      // kirim 10 detik setelah perubahan terakhir
-  const DRIVE_RETRY = 5 * 60000;  // coba ulang tiap 5 menit jika gagal/offline
-  const drive = { timer: null, sending: false, error: null, rev: 0 };
-  const driveConfigured = () => !!(backup.meta.driveUrl && backup.meta.driveToken);
-
-  function driveState() {
-    if (!driveConfigured()) return 'off';
-    if (freshStart) return 'blocked';
-    if (drive.sending) return 'saving';
-    if (drive.error) return navigator.onLine ? 'error' : 'offline';
-    if (backup.meta.driveDirty) return 'pending';
-    return 'ok';
-  }
-
-  function renderDriveStatus() {
-    const st = driveState();
-    const last = backup.meta.driveLastOk ? fmtStamp(backup.meta.driveLastOk) : 'never';
-
-    const pill = $('#drivePill');
-    const PILL = {
-      blocked: ['warn', '☁ Drive paused', 'Browser data is empty — import your data first'],
-      saving: ['', '☁ Sending...', ''],
-      pending: ['', '☁ Waiting to send...', 'Changes will be sent in a few seconds'],
-      offline: ['warn', '☁ Offline', 'Changes will be sent automatically when you are back online'],
-      error: ['error', '☁ Drive failed — click to retry', drive.error || ''],
-      ok: ['ok', `☁ Drive ✓ ${last}`, 'Google Drive backup sent']
-    };
-    pill.hidden = st === 'off';
-    if (PILL[st]) {
-      const [cls, text, title] = PILL[st];
-      pill.className = `backup-pill ${cls}`;
-      pill.textContent = text;
-      pill.title = title;
-      pill.dataset.state = st;
-    }
-
-    const DESC = {
-      off: 'Data is sent automatically to your Google Drive folder via Google Apps Script. Enter the Web App URL & token, then click <b>Save & test</b>.',
-      blocked: '<span class="txt-danger">Paused: this browser has no data. Import/restore your data first so the Drive backup is not overwritten with empty data.</span>',
-      saving: 'Sending to Google Drive...',
-      pending: 'Changes will be sent in a few seconds.',
-      offline: 'You are offline. Changes will be sent automatically when you are back online.',
-      error: `<span class="txt-danger">Failed to send: ${esc(drive.error)}</span>`,
-      ok: `Last sent: <b>${last}</b>. Saved as a main file + daily copy in your Drive folder.`
-    };
-    const BTN_SEND = '<button class="btn ghost" data-drive="send">↻ Send now</button>';
-    const BTN_OFF = '<button class="btn danger-ghost" data-drive="disable">Turn off</button>';
-    $('#driveDesc').innerHTML = DESC[st];
-    $('#driveActions').innerHTML = st === 'off' ? ''
-      : st === 'blocked' ? `<button class="btn ghost" data-drive="force">Send anyway</button>${BTN_OFF}`
-      : BTN_SEND + BTN_OFF;
-  }
-
-  // Balasan Apps Script normalnya bisa dibaca (CORS diizinkan). Jika browser tetap memblokir,
-  // kirim ulang dalam mode no-cors: data tetap sampai, hanya balasannya tidak bisa dibaca.
-  async function postToScript(body, keepalive) {
-    const url = backup.meta.driveUrl;
-    let res;
-    try {
-      res = await fetch(url, { method: 'POST', body, keepalive, redirect: 'follow' });
-    } catch (err) {
-      if (!navigator.onLine) throw new Error('No internet connection.');
-      await fetch(url, { method: 'POST', body, keepalive, mode: 'no-cors' });
-      return null;
-    }
-    try { return await res.json(); } catch (e) {
-      throw new Error('Invalid response from Apps Script. Make sure the URL ends with /exec and the deployment access is "Anyone".');
-    }
-  }
-
-  async function uploadDrive({ keepalive = false } = {}) {
-    clearTimeout(drive.timer);
-    drive.timer = null;
-    if (!driveConfigured() || freshStart) return false;
-    if (drive.sending) { scheduleDrive(); return false; }
-    const rev = drive.rev;
-    const hadError = !!drive.error;
-    drive.sending = true;
-    renderDriveStatus();
-    try {
-      const body = JSON.stringify({ token: backup.meta.driveToken, data: state });
-      const res = await postToScript(body, keepalive && body.length < 60000); // batas keepalive ± 64 KB
-      if (res && !res.ok) throw new Error(res.error || 'Data was rejected by Apps Script.');
-      drive.error = null;
-      if (drive.rev === rev) backup.meta.driveDirty = false; // tidak ada perubahan baru selama mengirim
-      backup.meta.driveLastOk = Date.now();
-      saveBackupMeta();
-      return true;
-    } catch (err) {
-      console.error(err);
-      drive.error = err.message || String(err);
-      backup.meta.driveDirty = true;
-      saveBackupMeta();
-      if (!hadError && navigator.onLine) notify('error', `Your data is still safe in the browser. ${drive.error}`, 'Google Drive backup failed');
-      return false;
-    } finally {
-      drive.sending = false;
-      renderDriveStatus();
-    }
-  }
-
-  function scheduleDrive() {
-    if (!driveConfigured()) return;
-    drive.rev++;
-    backup.meta.driveDirty = true;
-    saveBackupMeta();
-    if (!freshStart) {
-      clearTimeout(drive.timer);
-      drive.timer = setTimeout(uploadDrive, DRIVE_DELAY);
-    }
-    renderDriveStatus();
-  }
-
-  function fillDriveForm() {
-    $('#driveUrl').value = backup.meta.driveUrl || '';
-    $('#driveToken').value = backup.meta.driveToken || '';
-    $('#driveToken').type = 'password';
-  }
-
-  $('#driveForm').addEventListener('submit', async e => {
-    e.preventDefault();
-    const url = $('#driveUrl').value.trim();
-    const token = $('#driveToken').value.trim();
-    if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) {
-      notify('error', 'The URL must be the Apps Script "Web app URL", starting with https://script.google.com/ and ending with /exec.', 'Invalid URL');
-      return $('#driveUrl').focus();
-    }
-    if (!token) {
-      notify('error', 'Enter the same token as TOKEN in the Apps Script.', 'Token is empty');
-      return $('#driveToken').focus();
-    }
-    await withButtonLoading($('#driveSaveBtn'), async () => {
-      let res;
-      try {
-        res = await (await fetch(`${url}?token=${encodeURIComponent(token)}`, { redirect: 'follow' })).json();
-      } catch (err) {
-        console.error(err);
-        notify('error', navigator.onLine
-          ? 'Could not connect to Apps Script. Check the URL, and make sure "Who has access" was set to Anyone when deploying.'
-          : 'No internet connection.', 'Test failed');
-        return;
-      }
-      if (!res?.ok) {
-        // 'Token salah.' = pesan dari versi script berbahasa Indonesia
-        notify('error', ['Token salah.', 'Invalid token.'].includes(res?.error)
-          ? "The token doesn't match TOKEN in the Apps Script. If you just changed it, redeploy as a New version."
-          : `Apps Script returned an error: ${res?.error}. Check FOLDER_ID.`, 'Test failed');
-        return;
-      }
-      Object.assign(backup.meta, { driveUrl: url, driveToken: token, driveDirty: true });
-      saveBackupMeta();
-      drive.error = null;
-      $('#driveToken').type = 'password';
-      notify('success', `Connected to folder "${res.folder}".${freshStart ? '' : ' Sending the first backup...'}`, 'Google Drive connected');
-      if (!freshStart) await uploadDrive();
-      renderDriveStatus();
-    });
-  });
-
-  $('#driveGenBtn').addEventListener('click', async () => {
-    const t = Array.from(crypto.getRandomValues(new Uint8Array(18)), b => b.toString(16).padStart(2, '0')).join('');
-    $('#driveToken').value = t;
-    $('#driveToken').type = 'text'; // tampilkan supaya bisa disalin manual
-    try {
-      await navigator.clipboard.writeText(t);
-      notify('success', 'Token copied. Paste it into the TOKEN line in the Apps Script.', 'Token generated');
-    } catch (e) {
-      notify('info', 'Token generated. Copy it from the token field, then paste it into the TOKEN line in the Apps Script.', 'Token generated');
-    }
-  });
-
-  $('#driveActions').addEventListener('click', async e => {
-    const act = e.target.closest('[data-drive]')?.dataset.drive;
-    if (act === 'send') {
-      if (await uploadDrive()) notify('success', 'Latest data sent to Google Drive.', 'Drive backup');
-    }
-    if (act === 'force') {
-      const yes = await confirmBox({
-        title: 'Send current data to Drive?',
-        message: `The data in this browser (${plural(state.tasks.length, 'task')}, ${plural(state.meetings.length, 'meeting')}) will overwrite the main file in Google Drive.\nDaily copies from previous days stay safe.`,
-        okText: 'Send'
-      });
-      if (!yes) return;
-      freshStart = false;
-      if (await uploadDrive()) notify('success', 'Data sent to Google Drive.', 'Drive backup');
-    }
-    if (act === 'disable') {
-      const yes = await confirmBox({
-        title: 'Turn off Google Drive backup?',
-        message: 'Future changes will no longer be sent to Drive. Files already in Drive will not be deleted.',
-        okText: 'Turn off'
-      });
-      if (!yes) return;
-      clearTimeout(drive.timer);
-      drive.error = null;
-      for (const k of ['driveUrl', 'driveToken', 'driveDirty', 'driveLastOk']) delete backup.meta[k];
-      saveBackupMeta();
-      fillDriveForm();
-      renderDriveStatus();
-      notify('info', 'Google Drive backup turned off.');
-    }
-  });
-
-  $('#drivePill').addEventListener('click', e => {
-    const st = e.currentTarget.dataset.state;
-    if (st === 'error' || st === 'offline' || st === 'pending') uploadDrive();
-    else openSettings();
-  });
-
-  // Kirim ulang otomatis saat internet kembali / berkala jika masih ada yang tertunda
-  window.addEventListener('online', () => { if (backup.meta.driveDirty) uploadDrive(); });
-  window.addEventListener('offline', renderDriveStatus);
-  setInterval(() => {
-    if (backup.meta.driveDirty && !drive.sending && !drive.timer) uploadDrive();
-  }, DRIVE_RETRY);
 
   /* ================= DATA ONLINE (Supabase) ================= */
   const sb = CLOUD ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, {
@@ -2292,6 +2068,7 @@
       if (!can('edit')) [taskDialog, meetingDialog, catDialog].forEach(d => d.open && d.close());
       refreshAfterChange();
       offerLocalUpload();
+      loadServerBackup();
     }
   }
 
@@ -2458,6 +2235,104 @@
     loadUsers();
   });
 
+  /* ================= STATUS BACKUP HARIAN (Google Apps Script → Drive) ================= */
+  // Script backup melapor ke tabel backup_log setelah setiap backup. Hanya admin yang bisa membacanya.
+  const LATE_MS = 26 * 3600e3; // lebih dari ± 1 hari tanpa backup = terlambat
+  const srv = { state: 'loading', last: null, lastOk: null, busy: false };
+
+  async function loadServerBackup() {
+    if (!CLOUD || !can('admin') || srv.busy) return;
+    srv.busy = true;
+    try {
+      const { data, error } = await sb.from('backup_log')
+        .select('ran_at,ok,tasks,meetings,categories,message')
+        .order('ran_at', { ascending: false }).limit(20);
+      if (error) throw error;
+      srv.last = data[0] || null;
+      srv.lastOk = data.find(r => r.ok) || null;
+      srv.state = !srv.last ? 'none'
+        : !srv.last.ok ? 'error'
+        : Date.now() - new Date(srv.last.ran_at).getTime() > LATE_MS ? 'late' : 'ok';
+    } catch (err) {
+      console.error(err);
+      srv.state = err?.code === 'PGRST205' ? 'nodb' : 'unknown'; // PGRST205 = tabel belum dibuat
+    } finally {
+      srv.busy = false;
+      renderServerBackup();
+    }
+  }
+
+  function renderServerBackup() {
+    if (!CLOUD) return;
+    const ago = r => {
+      const days = Math.floor((Date.now() - new Date(r.ran_at).getTime()) / 86400000);
+      return days <= 0 ? '' : ` (${plural(days, 'day')} ago)`;
+    };
+    const counts = r => `${plural(r.tasks ?? 0, 'task')}, ${plural(r.meetings ?? 0, 'meeting')}, ${r.categories ?? 0} ${r.categories === 1 ? 'category' : 'categories'}`;
+    const when = r => fmtStamp(new Date(r.ran_at).getTime());
+    const lastOkLine = srv.lastOk ? `<br>Last successful backup: <b>${when(srv.lastOk)}</b>${ago(srv.lastOk)}.` : '';
+    const SETUP = `<ol class="bc-steps">
+        <li>Click <b>🔑 Create backup key</b> and copy the key.</li>
+        <li>In the Apps Script (<b>supabase-drive-backup.gs</b>), paste it into <b>BACKUP_TOKEN</b> and fill in <b>FOLDER_ID</b>.</li>
+        <li>Run <b>pasangJadwal</b> once. The status appears here after the first backup.</li>
+      </ol>`;
+
+    const V = {
+      loading: ['', 'Checking...', 'Checking the latest backup...', '', ''],
+      ok: ['ok', '● Active', `Last backup: <b>${srv.last && when(srv.last)}</b> · ${srv.last && counts(srv.last)}.<br>Runs every night around 23:00.`,
+        'ok', `🛡 Backup ✓ ${srv.last && when(srv.last)}`],
+      late: ['warn', 'Late', `<span class="txt-warn">No backup in over a day.</span>${lastOkLine}<br>The schedule may have stopped — open the Apps Script and run <b>pasangJadwal</b> again.`,
+        'warn', '🛡 Backup late'],
+      error: ['error', 'Failed', `<span class="txt-danger">The last backup (${srv.last && when(srv.last)}) failed: ${esc(srv.last?.message || 'unknown error')}</span>${lastOkLine}`,
+        'error', '🛡 Backup failed'],
+      none: ['warn', 'Not set up', `No backup has been reported yet.${SETUP}`, 'warn', '🛡 Backup not set up'],
+      nodb: ['warn', 'Not set up', 'The database is not ready for backup status yet. Run the latest <b>supabase/schema.sql</b> in Supabase → SQL Editor.', 'warn', '🛡 Backup not set up'],
+      unknown: ['', 'Unknown', 'Could not check the backup status right now. Try <b>↻ Check status</b> later.', '', '']
+    };
+    const [cls, label, detail, pillCls, pillText] = V[srv.state] || V.unknown;
+    $('#srvStatus').className = `bc-status ${cls}`;
+    $('#srvStatus').textContent = label;
+    $('#srvDetail').innerHTML = detail;
+
+    const pill = $('#srvPill');
+    pill.hidden = !pillText;
+    pill.className = `backup-pill need-admin cloud-only ${pillCls}`;
+    pill.textContent = pillText;
+    pill.title = 'Daily backup to Google Drive — click for details';
+  }
+
+  $('#srvPill').addEventListener('click', () => openSettings());
+  $('#srvRefreshBtn').addEventListener('click', loadServerBackup);
+  $('#srvKeyBtn').addEventListener('click', async () => {
+    const yes = await confirmBox({
+      title: 'Create a new backup key?',
+      message: 'The backup script uses this key to report each backup here.\nA new key replaces the old one, so the script must be updated with the new key.',
+      okText: 'Create key',
+      danger: false
+    });
+    if (!yes) return;
+    const { data, error } = await sb.rpc('new_backup_token');
+    if (error) {
+      notify('error', error.code === 'PGRST202' ? 'Run the latest supabase/schema.sql in Supabase first.' : error.message, 'Could not create key');
+      return;
+    }
+    $('#srvKey').value = data;
+    $('#srvKeyBox').hidden = false;
+    $('#srvKey').select();
+    try {
+      await navigator.clipboard.writeText(data);
+      notify('success', 'Backup key copied. Paste it into BACKUP_TOKEN in the Apps Script.', 'Key created');
+    } catch (e) {
+      notify('info', 'Copy the key from the box, then paste it into BACKUP_TOKEN in the Apps Script.', 'Key created');
+    }
+  });
+  $('#srvKeyCopy').addEventListener('click', async () => {
+    $('#srvKey').select();
+    try { await navigator.clipboard.writeText($('#srvKey').value); notify('success', 'Backup key copied.'); }
+    catch (e) { notify('info', 'Press Ctrl+C to copy the selected key.'); }
+  });
+  settingsDialog.addEventListener('close', () => { $('#srvKeyBox').hidden = true; $('#srvKey').value = ''; });
+
   async function initCloud() {
     $('#storageNote').textContent = 'Data is stored online and anyone with the link can view it. Only signed-in editors and admins can change it.';
     renderSyncPill();
@@ -2482,6 +2357,7 @@
       initBackup();
       offerLocalUpload();
     }
+    setInterval(loadServerBackup, 30 * 60000); // cek status backup harian tiap 30 menit
   }
 
   /* ================= INIT ================= */

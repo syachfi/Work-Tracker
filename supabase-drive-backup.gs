@@ -12,27 +12,70 @@
  *  1. Buat folder di Google Drive, mis. "WorkTrack Backup". Buka foldernya, salin ID dari URL:
  *       https://drive.google.com/drive/folders/<<INI_ID_FOLDERNYA>>
  *  2. Buka https://script.google.com → "New project". Hapus isi editor, tempel SELURUH file ini.
- *  3. Isi FOLDER_ID di bawah. Klik 💾 Save.
+ *  3. Isi FOLDER_ID di bawah.
+ *     Isi juga BACKUP_TOKEN: di website WorkTrack (login sebagai admin) → ⚙️ Settings → Backup →
+ *     "🔑 Create backup key" → Copy → tempel di bawah. Dengan ini status backup tampil di website.
+ *     Klik 💾 Save.
  *  4. Di toolbar pilih fungsi "pasangJadwal" → klik Run → izinkan akses
  *     (Review permissions → pilih akun → Advanced → Go to project (unsafe) → Allow).
  *     Ini wajar untuk script buatan sendiri. Backup pertama langsung dibuat saat itu juga.
  *  5. Cek folder Drive: harus ada worktrack-backup.json dan worktrack-<tanggal hari ini>.json.
+ *     Di website: ⚙️ Settings → Backup harus menunjukkan "● Active".
  *
- * Jika backup gagal, Google otomatis mengirim email pemberitahuan ke akun Anda.
+ * Jika backup gagal, Google otomatis mengirim email pemberitahuan ke akun Anda,
+ * dan website menampilkan "Backup failed".
  * Untuk menghentikan: jalankan fungsi "hapusJadwal".
  */
 
 const SUPABASE_URL = 'https://chpxkngvuhrpblcsmkyo.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_sVOlHCe58TaO4f5PCntMKQ_mftUZOYZ'; // publishable key (publik, hanya bisa membaca)
 const FOLDER_ID = 'GANTI_DENGAN_ID_FOLDER';
+const BACKUP_TOKEN = 'GANTI_DENGAN_BACKUP_KEY';   // dari WorkTrack: Settings → Backup → Create backup key (RAHASIA)
 const TIMEZONE = 'Asia/Jakarta';            // WIB
 const JAM_BACKUP = 23;                      // jam backup harian (0–23)
 const KEEP_DAYS = 30;                       // salinan harian lebih lama dari ini dipindah ke Trash
 const MAIN_FILE = 'worktrack-backup.json';
 const TABLES = ['categories', 'tasks', 'meetings'];
 
-// Dijalankan otomatis setiap hari oleh jadwal
+// Dijalankan otomatis setiap hari oleh jadwal. Hasilnya (berhasil/gagal) dilaporkan ke website.
 function backupHarian() {
+  let data;
+  try {
+    data = buatBackup();
+  } catch (err) {
+    lapor(false, null, String((err && err.message) || err));
+    throw err; // supaya Google juga mengirim email pemberitahuan
+  }
+  return { terlapor: lapor(true, data, null) };
+}
+
+// Kirim status backup ke WorkTrack (tabel backup_log). Mengembalikan true jika diterima.
+function lapor(ok, data, message) {
+  if (!BACKUP_TOKEN || BACKUP_TOKEN.indexOf('GANTI_') === 0) return false;
+  try {
+    const res = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/rpc/log_backup', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { apikey: SUPABASE_KEY },
+      payload: JSON.stringify({
+        p_token: BACKUP_TOKEN, p_ok: ok,
+        p_tasks: data ? data.tasks.length : null,
+        p_meetings: data ? data.meetings.length : null,
+        p_categories: data ? data.categories.length : null,
+        p_message: message
+      }),
+      muteHttpExceptions: true
+    });
+    const code = res.getResponseCode();
+    if (code >= 200 && code < 300) return true;
+    Logger.log('Status backup tidak diterima WorkTrack (HTTP %s): %s', code, res.getContentText().slice(0, 300));
+  } catch (e) {
+    Logger.log('Gagal mengirim status backup: %s', e);
+  }
+  return false;
+}
+
+function buatBackup() {
   const folder = DriveApp.getFolderById(FOLDER_ID);
   const data = {};
   TABLES.forEach(function (t) { data[t] = ambilTabel(t); });
@@ -57,6 +100,7 @@ function backupHarian() {
   cleanup(folder);
   Logger.log('Backup OK: %s task, %s meeting, %s kategori → %s',
     data.tasks.length, data.meetings.length, data.categories.length, folder.getName());
+  return data;
 }
 
 // Ambil semua baris satu tabel (per 1000 baris)
@@ -95,8 +139,12 @@ function cleanup(folder) {
 function pasangJadwal() {
   hapusJadwal();
   ScriptApp.newTrigger('backupHarian').timeBased().everyDays(1).atHour(JAM_BACKUP).inTimezone(TIMEZONE).create();
-  backupHarian();
+  const hasil = backupHarian();
   Logger.log('Jadwal aktif: backup setiap hari sekitar pukul %s.00 WIB.', JAM_BACKUP);
+  if (!hasil.terlapor) {
+    throw new Error('Backup BERHASIL disimpan ke Drive dan jadwal sudah aktif, tetapi statusnya belum tampil di website. ' +
+      'Cek BACKUP_TOKEN (buat key baru di WorkTrack: Settings → Backup → Create backup key), Save, lalu jalankan pasangJadwal lagi.');
+  }
 }
 
 // Menghentikan backup harian

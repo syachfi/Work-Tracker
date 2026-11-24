@@ -14,7 +14,7 @@
     <div class="brand"><span class="logo">✓</span><span>WorkTrack</span></div>
     <div class="appbar-actions">
       <button type="button" class="backup-pill need-admin" id="backupPill" hidden></button>
-      <button type="button" class="backup-pill need-admin" id="drivePill" hidden></button>
+      <button type="button" class="backup-pill need-admin cloud-only" id="srvPill" hidden></button>
       <span class="sync-pill cloud-only" id="syncPill" hidden></span>
       <button type="button" class="btn ghost small need-super cloud-only" id="usersBtn" title="Manage users & roles">👥 Users</button>
       <button type="button" class="btn primary small cloud-only" id="signInBtn" hidden>Sign in</button>
@@ -353,46 +353,61 @@
       </div>
 
       <div class="setting-group-title need-admin">Backup</div>
-      <div class="setting-row need-admin">
-        <div>
-          <div class="setting-title">Automatic backup to file</div>
-          <div class="setting-desc" id="backupDesc"></div>
+
+      <!-- Backup harian otomatis (server Google) -->
+      <div class="backup-card need-admin cloud-only">
+        <div class="bc-head">
+          <span class="bc-icon">🛡️</span>
+          <div class="bc-title">
+            <div class="setting-title">Daily backup to Google Drive</div>
+            <div class="setting-desc">Runs by itself every night on Google's servers and saves everything — including changes made by other editors.</div>
+          </div>
+          <span class="bc-status" id="srvStatus"></span>
         </div>
-        <div class="setting-actions" id="backupActions"></div>
+        <div class="bc-detail" id="srvDetail"></div>
+        <div class="key-box" id="srvKeyBox" hidden>
+          <div class="key-row">
+            <input id="srvKey" readonly spellcheck="false" aria-label="Backup key">
+            <button type="button" class="btn primary small" id="srvKeyCopy">Copy</button>
+          </div>
+          <div class="setting-note">Paste this into <b>BACKUP_TOKEN</b> in the Apps Script, then click Save. It is shown only once — create a new one if you lose it.</div>
+        </div>
+        <div class="bc-actions">
+          <button type="button" class="btn ghost small" id="srvRefreshBtn">↻ Check status</button>
+          <button type="button" class="btn ghost small" id="srvKeyBtn">🔑 Create backup key</button>
+        </div>
       </div>
 
-      <div class="setting-row stacked need-admin">
-        <div class="setting-head">
+      <!-- Salinan di komputer ini -->
+      <div class="backup-card need-admin">
+        <div class="bc-head">
+          <span class="bc-icon">💻</span>
+          <div class="bc-title">
+            <div class="setting-title">Copy on this computer</div>
+            <div class="setting-desc">A second copy outside Google. Download one about once a month.</div>
+          </div>
+        </div>
+        <div class="bc-row">
           <div>
-            <div class="setting-title">Automatic backup to Google Drive</div>
-            <div class="setting-desc" id="driveDesc"></div>
+            <div class="bc-row-title">Download a copy now</div>
+            <div class="setting-desc">Saves a .json file. To restore it, use <b>Import</b> below.</div>
           </div>
-          <div class="setting-actions" id="driveActions"></div>
+          <button class="btn ghost" id="exportBtn">⬇ Export</button>
         </div>
-        <form class="drive-form" id="driveForm" novalidate>
-          <input id="driveUrl" type="url" placeholder="Web App URL (https://script.google.com/macros/s/.../exec)" autocomplete="off" spellcheck="false">
-          <div class="drive-token">
-            <input id="driveToken" type="password" placeholder="Secret code (token)" autocomplete="off" spellcheck="false">
-            <button type="button" class="btn ghost" id="driveGenBtn" title="Generate a random token & copy it">🎲 Generate token</button>
-            <button type="submit" class="btn primary" id="driveSaveBtn">Save & test</button>
+        <div class="bc-row">
+          <div>
+            <div class="bc-row-title">Auto-save to a file <span class="badge gray">optional</span></div>
+            <div class="setting-desc" id="backupDesc"></div>
           </div>
-          <div class="setting-note">Setup guide is in <b>google-drive-backup.gs</b> (in this app's folder).</div>
-        </form>
+          <div class="setting-actions" id="backupActions"></div>
+        </div>
       </div>
 
-      <div class="setting-group-title">Data</div>
-      <div class="setting-row">
-        <div>
-          <div class="setting-title">Export data (backup)</div>
-          <div class="setting-desc">Download all tasks & meetings as a JSON file. Do this regularly to keep your data safe.</div>
-        </div>
-        <button class="btn ghost" id="exportBtn">⬇ Export</button>
-      </div>
-
+      <div class="setting-group-title need-admin">Data</div>
       <div class="setting-row need-admin">
         <div>
           <div class="setting-title">Import data</div>
-          <div class="setting-desc">Restore from an export file or the automatic backup file. Current data will be <b>replaced</b>.</div>
+          <div class="setting-desc">Restore from a backup file (a daily copy from Google Drive or an Export). Current data will be <b>replaced</b>.</div>
         </div>
         <label class="btn ghost">⬆ Import
           <input type="file" id="importInput" accept=".json,application/json" hidden>

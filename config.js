@@ -5,6 +5,6 @@
 // di database (supabase/schema.sql). JANGAN PERNAH menaruh "service_role" / "secret" key di sini.
 // Biarkan kosong untuk memakai mode lokal (data hanya di browser ini).
 window.WORKTRACK_CONFIG = {
-  supabaseUrl: '',
-  supabaseAnonKey: ''
+  supabaseUrl: 'https://chpxkngvuhrpblcsmkyo.supabase.co',
+  supabaseAnonKey: 'sb_publishable_sVOlHCe58TaO4f5PCntMKQ_mftUZOYZ'
 };

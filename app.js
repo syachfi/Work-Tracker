@@ -40,9 +40,77 @@
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`; // 1 task, 2 tasks
   const groupByDate = arr => arr.reduce((acc, x) => ((acc[x.date] ||= []).push(x), acc), {});
 
+  /* ================= VALIDASI DATA (file import / database / backup) ================= */
+  // Semua data dari luar dirapikan dulu: hanya field yang dikenal, tipe & panjang dibatasi,
+  // nilai pilihan (status, prioritas, dll.) harus dari daftar yang sah. Ini mencegah data
+  // "jahat" (mis. berisi kode HTML/JS) ikut tampil di halaman.
+  const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const TIME_RE = /^\d{2}:\d{2}$/;
+  const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+  const str = (v, max) => (typeof v === 'string' ? v : v == null ? '' : String(v)).slice(0, max);
+  const oneOf = (v, obj, def) => (typeof v === 'string' && Object.prototype.hasOwnProperty.call(obj, v)) ? v : def;
+  const optDate = v => DATE_RE.test(v) ? v : '';
+  const optTime = v => TIME_RE.test(v) ? v : '';
+  const optId = v => ID_RE.test(v) ? v : null;
+
+  function cleanCategory(c) {
+    if (!c || !ID_RE.test(c.id)) return null;
+    return { id: c.id, name: str(c.name, 40).trim() || 'Untitled', color: COLOR_RE.test(c.color) ? c.color : '#64748b' };
+  }
+  function cleanTask(t) {
+    if (!t || !ID_RE.test(t.id) || !DATE_RE.test(t.date)) return null;
+    const out = {
+      id: t.id, title: str(t.title, 150), date: t.date, time: optTime(t.time),
+      priority: oneOf(t.priority, PRIORITY, 'med'), status: oneOf(t.status, STATUS, 'todo'),
+      categoryId: optId(t.categoryId) || '', desc: str(t.desc, 20000)
+    };
+    if ('category' in t) out.category = str(t.category, 40); // format lama, diubah oleh migrate()
+    return out;
+  }
+  function cleanActionItem(a) {
+    if (!a || typeof a !== 'object') return null;
+    return { id: optId(a.id) || uid(), text: str(a.text, 500), pic: str(a.pic, 100), due: optDate(a.due), done: a.done === true, taskId: optId(a.taskId) };
+  }
+  function cleanMeeting(m) {
+    if (!m || !ID_RE.test(m.id) || !DATE_RE.test(m.date)) return null;
+    return {
+      id: m.id, title: str(m.title, 150), date: m.date, start: optTime(m.start), end: optTime(m.end),
+      type: oneOf(m.type, MTYPE, 'offline'), location: str(m.location, 500),
+      organizer: str(m.organizer, 100), notetaker: str(m.notetaker, 100),
+      status: oneOf(m.status, MSTATUS, 'scheduled'),
+      participants: (Array.isArray(m.participants) ? m.participants : []).map(p => str(p, 100).trim()).filter(Boolean).slice(0, 300),
+      objective: str(m.objective, 20000), agenda: str(m.agenda, 20000), minutes: str(m.minutes, 100000),
+      decisions: str(m.decisions, 20000), nextMeeting: optDate(m.nextMeeting),
+      actionItems: (Array.isArray(m.actionItems) ? m.actionItems : []).map(cleanActionItem).filter(Boolean).slice(0, 300)
+    };
+  }
+  const cleanList = (arr, fn) => {
+    const seen = new Set();
+    return (Array.isArray(arr) ? arr : []).map(fn).filter(x => x && !seen.has(x.id) && seen.add(x.id));
+  };
+  const cleanState = d => ({
+    categories: cleanList(d?.categories, cleanCategory),
+    tasks: cleanList(d?.tasks, cleanTask),
+    meetings: cleanList(d?.meetings, cleanMeeting)
+  });
+
+  /* ================= MODE ONLINE (Supabase) & HAK AKSES ================= */
+  // Jika config.js berisi URL & key Supabase, data disimpan online dan bisa dilihat siapa saja
+  // yang punya link. Mengubah data butuh login dengan peran editor/admin/super admin.
+  // Tombol disembunyikan sesuai peran, tapi pengamanan SEBENARNYA ada di database (RLS).
+  const CFG = window.WORKTRACK_CONFIG || {};
+  const CLOUD = !!(CFG.supabaseUrl && CFG.supabaseAnonKey && window.supabase?.createClient);
+  const RANK = { anon: 0, viewer: 0, editor: 1, admin: 2, super_admin: 3 };
+  const ROLE_LABEL = { anon: 'Guest', viewer: 'Viewer', editor: 'Editor', admin: 'Admin', super_admin: 'Super admin' };
+  const auth = { user: null, role: CLOUD ? 'anon' : 'super_admin' }; // mode lokal: pemilik browser boleh semua
+  const can = what => RANK[auth.role] >= { edit: 1, admin: 2, super: 3 }[what];
+  const ro = () => can('edit') ? '' : ' disabled'; // atribut untuk checkbox/select saat hanya bisa melihat
+
   /* ================= STATE ================= */
   let freshStart = false; // true jika localStorage kosong (mis. data browser baru dihapus)
-  let state = load();
+  let state = CLOUD ? { categories: [], tasks: [], meetings: [] } : load();
+  if (CLOUD) freshStart = true; // sampai data online selesai dimuat (backup tidak boleh menulis data kosong)
   const ui = loadUi();
   const viewDate = new Date(); viewDate.setDate(1);
   let openDayKey = null;
@@ -58,8 +126,8 @@
 
   // Data lama menyimpan kategori sebagai teks bebas (task.category).
   // Sekarang kategori adalah master data (state.categories) dan task menyimpan categoryId.
-  function migrate(d) {
-    if (!Array.isArray(d.categories)) d.categories = [];
+  function migrate(raw) {
+    const d = cleanState(raw);
     const findOrCreate = name => {
       let c = d.categories.find(x => x.name.toLowerCase() === name.toLowerCase());
       if (!c) {
@@ -214,14 +282,26 @@
     : (err?.message ? `Details: ${err.message}` : 'Please try again.');
 
   // Jalankan perubahan data + simpan. Jika gagal, data dikembalikan ke kondisi sebelumnya.
-  function commit(mutate, { success, error = 'Failed to save changes.' } = {}) {
+  // Mode online: perubahan dikirim ke database; jika ditolak, data dimuat ulang dari server.
+  async function commit(mutate, { success, error = 'Failed to save changes.' } = {}) {
+    if (!can('edit')) {
+      refreshAfterChange(); // kembalikan checkbox dll. yang sempat berubah di layar
+      notify('warning', auth.user
+        ? 'Your account can only view. Ask the super admin for editor access.'
+        : 'Sign in with an editor account to make changes.', 'View only');
+      return false;
+    }
     const backup = JSON.stringify(state);
+    let ops = null;
     try {
       mutate();
-      save();
+      if (CLOUD) {
+        ops = diffState(JSON.parse(backup), state);
+        if (ops.deletes && !can('admin')) throw new Error('Only admins can delete items.');
+      } else {
+        save();
+      }
       refreshAfterChange();
-      if (success) notify('success', success);
-      return true;
     } catch (err) {
       console.error(err);
       state = JSON.parse(backup);
@@ -229,6 +309,20 @@
       notify('error', `${error} ${errorDetail(err)}`);
       return false;
     }
+    if (CLOUD && ops.count) {
+      try {
+        await cloudSync(ops);
+        scheduleBackup();
+        scheduleDrive();
+      } catch (err) {
+        console.error(err);
+        notify('error', `${error} ${cloudErrorText(err)}`);
+        await reloadCloud({ quiet: true }); // tampilkan kembali data yang benar dari server
+        return false;
+      }
+    }
+    if (success) notify('success', success);
+    return true;
   }
 
   function refreshAfterChange() {
@@ -452,16 +546,16 @@
   }
 
   function taskChip(t) {
-    return `<div class="chip task p-${t.priority} s-${t.status} ${isOverdue(t) ? 'overdue' : ''}" draggable="true" data-task="${t.id}"
+    return `<div class="chip task p-${t.priority} s-${t.status} ${isOverdue(t) ? 'overdue' : ''}" draggable="${can('edit')}" data-task="${t.id}"
         title="${esc(t.title)}${isOverdue(t) ? ' (OVERDUE)' : ''} — ${STATUS[t.status]}, ${PRIORITY[t.priority].label.toLowerCase()} priority">
-      <input type="checkbox" data-action="toggle-task" ${t.status === 'done' ? 'checked' : ''} title="Mark as done">
+      <input type="checkbox" data-action="toggle-task" ${t.status === 'done' ? 'checked' : ''}${ro()} title="Mark as done">
       <span class="chip-text" data-action="edit-task">${t.time ? `<b>${esc(t.time)}</b> ` : ''}${esc(t.title)}</span>
       ${getCat(t.categoryId) ? `<i class="chip-cat" style="background:${esc(getCat(t.categoryId).color)}" title="${esc(getCat(t.categoryId).name)}"></i>` : ''}
     </div>`;
   }
   function meetingChip(m) {
     const past = m.date < todayKey() ? 'past' : '';
-    return `<div class="chip meeting m-${m.status} ${past}" draggable="true" data-meeting="${m.id}" data-action="open-meeting"
+    return `<div class="chip meeting m-${m.status} ${past}" draggable="${can('edit')}" data-meeting="${m.id}" data-action="open-meeting"
         title="Meeting: ${esc(m.title)} — ${MSTATUS[m.status]}${m.location ? ' · ' + esc(m.location) : ''}">
       <span class="chip-text">👥 ${m.start ? `<b>${esc(m.start)}</b> ` : ''}${esc(m.title)}</span>
     </div>`;
@@ -497,7 +591,7 @@
       html += `<div class="${cls}" data-date="${k}">
         <div class="day-head">
           <button class="day-num" data-action="open-day" title="View details for ${fmtDate(k)}">${d.getDate()}</button>
-          <button class="add-btn" data-action="add" title="${addTitle}">+</button>
+          <button class="add-btn need-edit" data-action="add" title="${addTitle}">+</button>
         </div>
         ${shown ? `<div class="day-items">${items.slice(0, shown).join('')}</div>` : ''}
         ${more > 0 ? `<button class="more" data-action="open-day">+${more} ${shown ? 'more' : 'items'}</button>` : ''}
@@ -708,6 +802,7 @@
   let addMenuDate = null;
 
   function addAgenda(dateKey, x, y) {
+    if (!can('edit')) return;
     if (ui.type === 'task') return openTaskForm(null, dateKey);
     if (ui.type === 'meeting') return openMeetingForm(null, dateKey);
     addMenuDate = dateKey;
@@ -806,7 +901,7 @@
         }
         const rel = taskRelLabel(t);
         html += `<div class="side-item p-${t.priority} s-${t.status}" data-task="${t.id}" title="${esc(fmtDate(t.date))} — ${STATUS[t.status]}">
-          <input type="checkbox" data-action="toggle" ${t.status === 'done' ? 'checked' : ''} title="Mark as done">
+          <input type="checkbox" data-action="toggle" ${t.status === 'done' ? 'checked' : ''}${ro()} title="Mark as done">
           <div class="st-info">
             <div class="st-title">${esc(t.title)}</div>
             <div class="st-meta">
@@ -875,9 +970,14 @@
     fillTaskCategorySelect(task ? task.categoryId : (getCat(cf) ? cf : ''));
     $('#t-desc').value = task?.desc || '';
     $('#deleteTaskBtn').hidden = !task;
+    // Hanya bisa melihat: form tampil sebagai detail (tidak bisa diubah)
+    const readOnly = !can('edit');
+    $$('#taskForm input, #taskForm select, #taskForm textarea').forEach(el => { el.disabled = readOnly; });
+    if (readOnly) $('#taskDialogTitle').textContent = 'Task Details';
+    $('#taskCancelBtn').textContent = readOnly ? 'Close' : 'Cancel';
     clearInvalid(taskDialog);
     taskDialog.showModal();
-    $('#t-title').focus();
+    if (!readOnly) $('#t-title').focus();
   }
 
   function fillTaskCategorySelect(selectedId) {
@@ -965,7 +1065,7 @@
     html += `<div><div class="day-section-title">Tasks (${tasks.length})</div>`;
     html += tasks.length ? tasks.map(t => `
       <div class="day-row p-${t.priority} s-${t.status}" data-task="${t.id}">
-        <input type="checkbox" data-action="toggle" ${t.status === 'done' ? 'checked' : ''} title="Mark as done">
+        <input type="checkbox" data-action="toggle" ${t.status === 'done' ? 'checked' : ''}${ro()} title="Mark as done">
         <div class="info">
           <div class="title" data-action="edit">${esc(t.title)}</div>
           ${t.desc ? `<div class="desc">${esc(t.desc)}</div>` : ''}
@@ -976,7 +1076,7 @@
             ${catTag(t, 'pill')}
           </div>
         </div>
-        <select data-action="status" title="Change status">
+        <select data-action="status" title="Change status"${ro()}>
           ${Object.entries(STATUS).map(([v, l]) => `<option value="${v}" ${t.status === v ? 'selected' : ''}>${l}</option>`).join('')}
         </select>
       </div>`).join('') : '<div class="empty">No tasks on this date yet.</div>';
@@ -1025,13 +1125,13 @@
           const late = !a.done && a.due && a.due < tk;
           const linked = a.taskId && getTask(a.taskId);
           return `<tr class="${a.done ? 'done' : ''}" data-ai="${a.id}">
-            <td><input type="checkbox" data-action="toggle-ai" ${a.done ? 'checked' : ''}></td>
+            <td><input type="checkbox" data-action="toggle-ai" ${a.done ? 'checked' : ''}${ro()}></td>
             <td class="ai-text">${esc(a.text)}</td>
             <td>${esc(a.pic) || '-'}</td>
             <td>${a.due ? fmtShort(a.due) : '-'} ${late ? '<span class="badge overdue">Overdue</span>' : ''}</td>
             <td class="no-print">${linked
               ? '<button class="link-btn" data-action="goto-task">✓ View in calendar</button>'
-              : '<button class="link-btn" data-action="send-ai">+ Make it a task</button>'}</td>
+              : '<button class="link-btn need-edit" data-action="send-ai">+ Make it a task</button>'}</td>
           </tr>`;
         }).join('')}</tbody></table>` : '';
 
@@ -1043,10 +1143,10 @@
           <span class="badge gray">${MTYPE[m.type] || 'Offline'}</span>
         </div>
         <div class="detail-actions">
-          ${m.status === 'scheduled' ? '<button class="btn ghost small" data-action="mark-done">✔ Mark as Done</button>' : ''}
-          <button class="btn ghost small" data-action="duplicate" title="Create a new meeting with the same details (e.g. a recurring meeting)">⧉ Duplicate</button>
+          ${m.status === 'scheduled' ? '<button class="btn ghost small need-edit" data-action="mark-done">✔ Mark as Done</button>' : ''}
+          <button class="btn ghost small need-edit" data-action="duplicate" title="Create a new meeting with the same details (e.g. a recurring meeting)">⧉ Duplicate</button>
           <button class="btn ghost small" data-action="print">🖨 Print Minutes</button>
-          <button class="btn primary small" data-action="edit">✎ Edit / Write Minutes</button>
+          <button class="btn primary small need-edit" data-action="edit">✎ Edit / Write Minutes</button>
         </div>
       </div>
 
@@ -1179,7 +1279,7 @@
           </button>
           ${items.sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999')).map(a => `
             <div class="ai-item ${isLate(a) ? 'late' : ''}" data-mid="${m.id}" data-ai="${a.id}">
-              <input type="checkbox" data-action="toggle" title="Mark as done">
+              <input type="checkbox" data-action="toggle" title="Mark as done"${ro()}>
               <div class="ai-item-text">${esc(a.text)}</div>
               <div class="ai-item-meta">
                 ${a.pic ? `<span>👤 ${esc(a.pic)}</span>` : ''}
@@ -1383,7 +1483,7 @@
         <input type="color" class="cat-color" value="${esc(c.color)}" title="Change color">
         <input class="cat-name" value="${esc(c.name)}" maxlength="40" title="Click to rename">
         <span class="cat-usage">${catUsage(c.id)} task${catUsage(c.id) === 1 ? '' : 's'}</span>
-        <button type="button" class="icon-btn sm danger" data-action="del-cat" title="Delete category">✕</button>
+        <button type="button" class="icon-btn sm danger need-admin" data-action="del-cat" title="Delete category">✕</button>
       </div>`).join('') || '<div class="empty">No categories yet. Add one above.</div>';
   }
 
@@ -1507,7 +1607,7 @@
 
     const yes = await confirmBox({
       title: 'Import data?',
-      message: `The file contains ${plural(data.tasks.length, 'task')} and ${plural(data.meetings.length, 'meeting')}.\nAll current data will be REPLACED.`,
+      message: `The file contains ${plural(data.tasks.length, 'task')} and ${plural(data.meetings.length, 'meeting')}.\nAll current data will be REPLACED${CLOUD ? ' — for EVERYONE who uses this link' : ''}.`,
       okText: 'Import & replace'
     });
     if (!yes) return;
@@ -1522,7 +1622,7 @@
   $('#resetBtn').addEventListener('click', async () => {
     const yes = await confirmBox({
       title: 'Delete all data?',
-      message: `${plural(state.tasks.length, 'task')} and ${plural(state.meetings.length, 'meeting')} will be permanently deleted. This cannot be undone.\nCategories are kept. Export your data first if you need a backup.`,
+      message: `${plural(state.tasks.length, 'task')} and ${plural(state.meetings.length, 'meeting')} will be permanently deleted${CLOUD ? ' for everyone' : ''}. This cannot be undone.\nCategories are kept. Export your data first if you need a backup.`,
       okText: 'Delete all'
     });
     if (!yes) return;
@@ -2020,14 +2120,379 @@
     if (backup.meta.driveDirty && !drive.sending && !drive.timer) uploadDrive();
   }, DRIVE_RETRY);
 
+  /* ================= DATA ONLINE (Supabase) ================= */
+  const sb = CLOUD ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+  }) : null;
+  const TABLES = ['categories', 'tasks', 'meetings'];
+  const cloud = { loaded: false, sync: 'loading', reloadTimer: null, queue: Promise.resolve() };
+
+  // Bandingkan data sebelum & sesudah perubahan → baris yang perlu disimpan / dihapus
+  function diffState(before, after) {
+    const ops = { upserts: {}, removes: {}, count: 0, deletes: 0 };
+    for (const t of TABLES) {
+      const old = new Map(before[t].map(x => [x.id, JSON.stringify(x)]));
+      const now = new Set();
+      ops.upserts[t] = [];
+      ops.removes[t] = [];
+      for (const x of after[t]) {
+        now.add(x.id);
+        if (old.get(x.id) !== JSON.stringify(x)) ops.upserts[t].push({ id: x.id, data: x });
+      }
+      for (const id of old.keys()) if (!now.has(id)) ops.removes[t].push(id);
+      ops.count += ops.upserts[t].length + ops.removes[t].length;
+      ops.deletes += ops.removes[t].length;
+    }
+    return ops;
+  }
+
+  // Perubahan dikirim berurutan (antrian), supaya tidak saling menimpa
+  function cloudSync(ops) {
+    const run = cloud.queue.catch(() => {}).then(() => pushOps(ops));
+    cloud.queue = run;
+    return run;
+  }
+
+  async function pushOps(ops) {
+    setSync('saving');
+    try {
+      for (const t of TABLES) {
+        const rows = ops.upserts[t];
+        for (let i = 0; i < rows.length; i += 200) {
+          const { error } = await sb.from(t).upsert(rows.slice(i, i + 200));
+          if (error) throw error;
+        }
+      }
+      for (const t of [...TABLES].reverse()) {
+        const ids = ops.removes[t];
+        for (let i = 0; i < ids.length; i += 200) {
+          const part = ids.slice(i, i + 200);
+          const { data, error } = await sb.from(t).delete().in('id', part).select('id');
+          if (error) throw error;
+          // Database tidak error saat hapus ditolak, hanya 0 baris terhapus → cek manual
+          if ((data || []).length < part.length) throw Object.assign(new Error('Delete was not allowed.'), { code: '42501' });
+        }
+      }
+      setSync('ok');
+    } catch (err) {
+      setSync('error');
+      throw err;
+    }
+  }
+
+  function cloudErrorText(err) {
+    if (err?.code === '42501') return 'You do not have permission for this change (your access may have changed). Refresh the page and try again.';
+    if (!navigator.onLine || /fetch|network/i.test(err?.message || '')) return 'Could not reach the server. Check your internet connection.';
+    return err?.message ? `Details: ${err.message}` : 'Please try again.';
+  }
+
+  async function fetchTable(table) {
+    const out = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await sb.from(table).select('id,data').order('id').range(from, from + 999);
+      if (error) throw error;
+      out.push(...data.map(r => ({ ...r.data, id: r.id })));
+      if (data.length < 1000) return out;
+    }
+  }
+
+  async function reloadCloud({ quiet = false } = {}) {
+    try {
+      const [categories, tasks, meetings] = await Promise.all(TABLES.map(fetchTable));
+      state = migrate({ categories, tasks, meetings });
+      cloud.loaded = true;
+      freshStart = false;
+      setSync('ok');
+      refreshAfterChange();
+      return true;
+    } catch (err) {
+      console.error(err);
+      setSync('error');
+      if (!quiet) notify('error', `Could not load data from the server. ${cloudErrorText(err)}`, 'Load failed');
+      return false;
+    }
+  }
+
+  // Perubahan dari orang lain masuk otomatis (realtime). Ditunda sebentar & menunggu antrian simpan.
+  function scheduleReload() {
+    clearTimeout(cloud.reloadTimer);
+    cloud.reloadTimer = setTimeout(() => cloud.queue.catch(() => {}).then(() => reloadCloud({ quiet: true })), 600);
+  }
+
+  function setSync(st) { cloud.sync = st; renderSyncPill(); }
+  function renderSyncPill() {
+    const pill = $('#syncPill');
+    pill.hidden = !CLOUD;
+    if (!CLOUD) return;
+    const [cls, text, title] =
+      cloud.sync === 'error' ? ['error', '☁ Not synced', 'Could not reach the server. Your last change may not be saved.']
+      : !can('edit') ? ['view', '👁 View only', auth.user ? 'Your account can view only. Ask the super admin for editor access.' : 'Sign in to add or edit']
+      : cloud.sync === 'saving' ? ['', '☁ Saving...', '']
+      : cloud.sync === 'loading' ? ['', '☁ Loading...', '']
+      : ['', '☁ Saved', 'All changes are saved online'];
+    pill.className = `sync-pill ${cls}`;
+    pill.textContent = text;
+    pill.title = title;
+  }
+
+  // Data lama di browser ini (sebelum online) bisa diunggah sekali oleh admin
+  let localOffered = false;
+  async function offerLocalUpload() {
+    const ASKED_KEY = 'worktrack-local-upload-asked';
+    if (!CLOUD || localOffered || !cloud.loaded || !can('admin') || localStorage.getItem(ASKED_KEY)) return;
+    if (state.tasks.length || state.meetings.length) return;
+    let local;
+    try { local = migrate(JSON.parse(localStorage.getItem(STORAGE_KEY))); } catch (e) { return; }
+    if (!local.tasks.length && !local.meetings.length) return;
+    localOffered = true;
+    try { localStorage.setItem(ASKED_KEY, '1'); } catch (e) { /* abaikan */ }
+    const yes = await confirmBox({
+      title: 'Upload data from this browser?',
+      message: `The online database is empty, but this browser still has ${plural(local.tasks.length, 'task')} and ${plural(local.meetings.length, 'meeting')} from before.\nUpload them so everyone with the link can see them?`,
+      okText: 'Upload',
+      danger: false
+    });
+    if (!yes) return;
+    await runWithLoading('Uploading data...', () => commit(() => { state = local; }, {
+      success: `Uploaded ${plural(local.tasks.length, 'task')} and ${plural(local.meetings.length, 'meeting')}.`,
+      error: 'Upload failed.'
+    }));
+  }
+
+  /* ================= LOGIN & AKUN ================= */
+  function applyAccess() {
+    const b = document.body.classList;
+    b.toggle('cloud', CLOUD);
+    b.toggle('can-edit', can('edit'));
+    b.toggle('can-admin', can('admin'));
+    b.toggle('can-super', can('super'));
+  }
+
+  function renderAccount() {
+    if (!CLOUD) return;
+    $('#signInBtn').hidden = !!auth.user;
+    $('#accountBtn').hidden = !auth.user;
+    if (auth.user) {
+      $('#accountBtn').innerHTML = `<span class="acc-mail">${esc(auth.user.email)}</span><span class="role-badge ${auth.role}">${ROLE_LABEL[auth.role]}</span>`;
+    }
+  }
+
+  async function refreshRole() {
+    let role = 'anon';
+    if (auth.user) {
+      const { data, error } = await sb.rpc('my_role');
+      role = !error && Object.prototype.hasOwnProperty.call(RANK, data) ? data : 'viewer';
+    }
+    const changed = role !== auth.role;
+    auth.role = role;
+    applyAccess();
+    renderAccount();
+    renderSyncPill();
+    if (changed) {
+      if (!can('edit')) [taskDialog, meetingDialog, catDialog].forEach(d => d.open && d.close());
+      refreshAfterChange();
+      offerLocalUpload();
+    }
+  }
+
+  const loginDialog = $('#loginDialog');
+  let loginMode = 'signin';
+  function setLoginMode(mode) {
+    loginMode = mode;
+    $('#loginTitle').textContent = { signin: 'Sign in', signup: 'Create account', forgot: 'Reset password' }[mode];
+    $('#loginSubmitBtn').textContent = { signin: 'Sign in', signup: 'Create account', forgot: 'Send reset link' }[mode];
+    $('#loginNote').textContent = {
+      signin: 'Anyone with the link can view. Sign in to add or edit (if the super admin has given you access).',
+      signup: 'New accounts can view only. The super admin decides who becomes an editor or admin. Use at least 8 characters for the password.',
+      forgot: 'Enter your account email. We will send a link to set a new password.'
+    }[mode];
+    $('#loginPassField').hidden = mode === 'forgot';
+    $('#loginPass').required = mode !== 'forgot';
+    $('#loginPass').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+    $('#loginModeBtn').textContent = mode === 'signin' ? 'No account yet? Create one' : 'Back to sign in';
+    $('#forgotBtn').hidden = mode !== 'signin';
+    clearInvalid(loginDialog);
+  }
+  function openLogin(mode = 'signin') {
+    $('#loginForm').reset();
+    setLoginMode(mode);
+    loginDialog.showModal();
+    $('#loginEmail').focus();
+  }
+  $('#signInBtn').addEventListener('click', () => openLogin());
+  $('#loginModeBtn').addEventListener('click', () => setLoginMode(loginMode === 'signin' ? 'signup' : 'signin'));
+  $('#forgotBtn').addEventListener('click', () => setLoginMode('forgot'));
+
+  const redirectUrl = () => location.origin + location.pathname;
+  $('#loginForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!validateRequired($('#loginForm'))) return;
+    const email = $('#loginEmail').value.trim();
+    const password = $('#loginPass').value;
+    if (loginMode !== 'forgot' && password.length < 8) {
+      $('#loginPass').classList.add('invalid');
+      notify('error', 'The password must be at least 8 characters.', 'Password too short');
+      return;
+    }
+    await withButtonLoading($('#loginSubmitBtn'), async () => {
+      if (loginMode === 'signin') {
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) return notify('error', error.message, 'Sign-in failed');
+        loginDialog.close();
+        notify('success', `Signed in as ${email}.`, 'Welcome');
+      } else if (loginMode === 'signup') {
+        const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: redirectUrl() } });
+        if (error) return notify('error', error.message, 'Could not create account');
+        loginDialog.close();
+        notify('info', data.session
+          ? 'Account created. You can view for now — ask the super admin for editor access.'
+          : `Open the email sent to ${email} and click the confirmation link, then sign in. You can view only until the super admin gives you access.`,
+          'Account created');
+      } else {
+        const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: redirectUrl() });
+        if (error) return notify('error', error.message, 'Could not send the link');
+        loginDialog.close();
+        notify('info', `If ${email} has an account, a link to set a new password has been sent.`, 'Check your email');
+      }
+    });
+  });
+
+  const accountDialog = $('#accountDialog');
+  const ROLE_NOTE = {
+    viewer: 'You can view everything. Ask the super admin if you need to add or edit.',
+    editor: 'You can add and edit tasks, meetings and categories. Deleting needs an admin.',
+    admin: 'You can add, edit and delete, import data and set up backups.',
+    super_admin: 'You can do everything, including giving other people access via 👥 Users.'
+  };
+  function openAccount() {
+    $('#passwordForm').reset();
+    $('#accEmail').textContent = auth.user?.email || '';
+    $('#accRole').innerHTML = `<span class="role-badge ${auth.role}">${ROLE_LABEL[auth.role]}</span>`;
+    $('#accRoleNote').textContent = ROLE_NOTE[auth.role] || '';
+    clearInvalid(accountDialog);
+    accountDialog.showModal();
+  }
+  $('#accountBtn').addEventListener('click', openAccount);
+  $('#signOutBtn').addEventListener('click', async () => {
+    await sb.auth.signOut();
+    accountDialog.close();
+    notify('info', 'You are signed out. You can still view the data.', 'Signed out');
+  });
+  $('#passwordForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!validateRequired($('#passwordForm'))) return;
+    const p1 = $('#newPass').value, p2 = $('#newPass2').value;
+    if (p1.length < 8) { $('#newPass').classList.add('invalid'); return notify('error', 'The password must be at least 8 characters.', 'Password too short'); }
+    if (p1 !== p2) { $('#newPass2').classList.add('invalid'); return notify('error', 'The two passwords are not the same.', 'Passwords do not match'); }
+    await withButtonLoading($('#passSaveBtn'), async () => {
+      const { error } = await sb.auth.updateUser({ password: p1 });
+      if (error) return notify('error', error.message, 'Could not change password');
+      $('#passwordForm').reset();
+      accountDialog.close();
+      notify('success', 'Your new password is saved.', 'Password changed');
+    });
+  });
+
+  /* ================= KELOLA USER (khusus super admin) ================= */
+  const usersDialog = $('#usersDialog');
+  const fmtWhen = v => v ? fmtShort(toKey(new Date(v))) : 'never';
+  let usersCache = [];
+
+  async function loadUsers() {
+    $('#userList').innerHTML = '<div class="empty">Loading...</div>';
+    const { data, error } = await sb.rpc('list_users');
+    if (error) {
+      $('#userList').innerHTML = `<div class="empty txt-danger">${esc(error.message)}</div>`;
+      return;
+    }
+    usersCache = data || [];
+    $('#userCount').textContent = usersCache.length;
+    $('#userList').innerHTML = usersCache.map(u => {
+      const me = u.id === auth.user?.id;
+      const control = u.role === 'super_admin'
+        ? `<span class="role-badge super_admin">${ROLE_LABEL.super_admin}</span>`
+        : `<select data-uid="${esc(u.id)}" title="Access level">
+             ${['viewer', 'editor', 'admin'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${ROLE_LABEL[r]}</option>`).join('')}
+           </select>
+           <button type="button" class="icon-btn sm danger" data-remove="${esc(u.id)}" title="Remove this account">✕</button>`;
+      return `<div class="user-row ${me ? 'me' : ''}">
+        <div class="u-info">
+          <div class="u-mail">${esc(u.email)}${me ? ' (you)' : ''}</div>
+          <div class="u-meta">Joined ${fmtWhen(u.created_at)} · Last sign-in ${fmtWhen(u.last_sign_in_at)}</div>
+        </div>
+        ${control}
+      </div>`;
+    }).join('') || '<div class="empty">No accounts yet.</div>';
+  }
+
+  $('#usersBtn').addEventListener('click', () => { usersDialog.showModal(); loadUsers(); });
+  $('#usersRefreshBtn').addEventListener('click', loadUsers);
+  $('#userList').addEventListener('change', async e => {
+    const sel = e.target.closest('select[data-uid]');
+    if (!sel) return;
+    const u = usersCache.find(x => x.id === sel.dataset.uid);
+    sel.disabled = true;
+    const { error } = await sb.rpc('set_user_role', { target: sel.dataset.uid, new_role: sel.value });
+    sel.disabled = false;
+    if (error) {
+      notify('error', error.message, 'Could not change access');
+      if (u) sel.value = u.role;
+      return;
+    }
+    if (u) u.role = sel.value;
+    notify('success', `${u?.email || 'User'} is now ${ROLE_LABEL[sel.value]}.`, 'Access updated');
+  });
+  $('#userList').addEventListener('click', async e => {
+    const btn = e.target.closest('[data-remove]');
+    if (!btn) return;
+    const u = usersCache.find(x => x.id === btn.dataset.remove);
+    const yes = await confirmBox({
+      title: 'Remove account?',
+      message: `${u?.email || 'This account'} will be deleted and can no longer sign in.\nThe data they created stays.`,
+      okText: 'Remove'
+    });
+    if (!yes) return;
+    const { error } = await sb.rpc('remove_user', { target: btn.dataset.remove });
+    if (error) return notify('error', error.message, 'Could not remove account');
+    notify('success', `${u?.email || 'Account'} removed.`, 'Account removed');
+    loadUsers();
+  });
+
+  async function initCloud() {
+    $('#storageNote').textContent = 'Data is stored online and anyone with the link can view it. Only signed-in editors and admins can change it.';
+    renderSyncPill();
+    sb.auth.onAuthStateChange((event, session) => {
+      auth.user = session?.user || null;
+      // Jangan memanggil Supabase langsung di dalam callback ini (bisa macet) → jalankan setelahnya
+      setTimeout(() => {
+        refreshRole();
+        if (event === 'PASSWORD_RECOVERY') {
+          openAccount();
+          notify('info', 'Enter a new password for your account.', 'Set a new password');
+        }
+      }, 0);
+    });
+    // Cek ulang peran saat kembali ke tab (mis. baru diberi akses oleh super admin)
+    window.addEventListener('focus', () => { if (auth.user) refreshRole(); });
+    const ok = await runWithLoading('Loading data...', () => reloadCloud());
+    sb.channel('worktrack-data')
+      .on('postgres_changes', { event: '*', schema: 'public' }, scheduleReload)
+      .subscribe();
+    if (ok) {
+      initBackup();
+      offerLocalUpload();
+    }
+  }
+
   /* ================= INIT ================= */
+  applyAccess();
   document.body.dataset.type = ui.type;
   $$('#typeFilter button').forEach(b => b.classList.toggle('active', b.dataset.type === ui.type));
   $$('#listScope button').forEach(b => b.classList.toggle('active', b.dataset.scope === ui.scope));
   $('#showDone').checked = ui.showDone;
   fillCategoryFilter();
   renderAll();
-  initBackup();
+  if (CLOUD) initCloud(); else initBackup();
 
   // Perbarui bubble tiap menit (meeting berikutnya), dan semua tampilan saat hari berganti
   let lastDay = todayKey();

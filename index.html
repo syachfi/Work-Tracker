@@ -13,8 +13,12 @@
   <div class="appbar-top">
     <div class="brand"><span class="logo">✓</span><span>WorkTrack</span></div>
     <div class="appbar-actions">
-      <button type="button" class="backup-pill" id="backupPill" hidden></button>
-      <button type="button" class="backup-pill" id="drivePill" hidden></button>
+      <button type="button" class="backup-pill need-admin" id="backupPill" hidden></button>
+      <button type="button" class="backup-pill need-admin" id="drivePill" hidden></button>
+      <span class="sync-pill cloud-only" id="syncPill" hidden></span>
+      <button type="button" class="btn ghost small need-super cloud-only" id="usersBtn" title="Manage users & roles">👥 Users</button>
+      <button type="button" class="btn primary small cloud-only" id="signInBtn" hidden>Sign in</button>
+      <button type="button" class="account-btn cloud-only" id="accountBtn" hidden title="Account"></button>
       <button class="icon-btn settings-btn" id="settingsBtn" title="Settings & data">⚙️</button>
     </div>
   </div>
@@ -95,7 +99,7 @@
             <option value="cancelled">Cancelled</option>
           </select>
         </div>
-        <div class="new-menu-wrap">
+        <div class="new-menu-wrap need-edit">
           <button class="btn primary" id="newBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="newMenu">
             + New <span class="caret">▾</span>
           </button>
@@ -127,7 +131,7 @@
         <span class="only-task"><i class="lg low"></i>Low</span>
         <span class="only-meeting"><i class="lg meeting"></i>Scheduled meeting</span>
         <span class="only-meeting"><i class="lg mdone"></i>Completed meeting</span>
-        <span class="tip">Click <b>+</b> / double-click a date to add · drag an item to move it to another date</span>
+        <span class="tip need-edit">Click <b>+</b> / double-click a date to add · drag an item to move it to another date</span>
       </div>
     </div>
   </div>
@@ -185,10 +189,10 @@
       </label>
     </div>
     <div class="dialog-foot">
-      <button type="button" class="btn danger-ghost" id="deleteTaskBtn">Delete</button>
+      <button type="button" class="btn danger-ghost need-admin" id="deleteTaskBtn">Delete</button>
       <span class="spacer"></span>
-      <button type="button" class="btn ghost" data-close>Cancel</button>
-      <button type="submit" class="btn primary" id="taskSubmitBtn">Save</button>
+      <button type="button" class="btn ghost" data-close id="taskCancelBtn">Cancel</button>
+      <button type="submit" class="btn primary need-edit" id="taskSubmitBtn">Save</button>
     </div>
   </form>
 </dialog>
@@ -201,7 +205,7 @@
       <button type="button" class="icon-btn" data-close>✕</button>
     </div>
     <div class="dialog-body" id="dayBody"></div>
-    <div class="dialog-foot">
+    <div class="dialog-foot need-edit">
       <button type="button" class="btn ghost" id="dayAddMeeting">+ Meeting</button>
       <span class="spacer"></span>
       <button type="button" class="btn primary" id="dayAddTask">+ Task</button>
@@ -292,7 +296,7 @@
       </label>
     </div>
     <div class="dialog-foot">
-      <button type="button" class="btn danger-ghost" id="deleteMeetingBtn">Delete</button>
+      <button type="button" class="btn danger-ghost need-admin" id="deleteMeetingBtn">Delete</button>
       <span class="spacer"></span>
       <button type="button" class="btn ghost" data-close>Cancel</button>
       <button type="submit" class="btn primary" id="meetingSubmitBtn">Save Meeting</button>
@@ -345,11 +349,11 @@
           <div class="setting-desc">Categories you pick when creating a task, also used for filtering.</div>
           <div class="cat-summary" id="catSummary"></div>
         </div>
-        <button class="btn primary" id="manageCatBtn">🏷️ Manage Categories</button>
+        <button class="btn primary need-edit" id="manageCatBtn">🏷️ Manage Categories</button>
       </div>
 
-      <div class="setting-group-title">Backup</div>
-      <div class="setting-row">
+      <div class="setting-group-title need-admin">Backup</div>
+      <div class="setting-row need-admin">
         <div>
           <div class="setting-title">Automatic backup to file</div>
           <div class="setting-desc" id="backupDesc"></div>
@@ -357,7 +361,7 @@
         <div class="setting-actions" id="backupActions"></div>
       </div>
 
-      <div class="setting-row stacked">
+      <div class="setting-row stacked need-admin">
         <div class="setting-head">
           <div>
             <div class="setting-title">Automatic backup to Google Drive</div>
@@ -385,7 +389,7 @@
         <button class="btn ghost" id="exportBtn">⬇ Export</button>
       </div>
 
-      <div class="setting-row">
+      <div class="setting-row need-admin">
         <div>
           <div class="setting-title">Import data</div>
           <div class="setting-desc">Restore from an export file or the automatic backup file. Current data will be <b>replaced</b>.</div>
@@ -395,7 +399,7 @@
         </label>
       </div>
 
-      <div class="setting-row danger">
+      <div class="setting-row danger need-admin">
         <div>
           <div class="setting-title">Delete all data</div>
           <div class="setting-desc">Remove all tasks & meetings. This cannot be undone — export first if needed.</div>
@@ -403,7 +407,7 @@
         <button class="btn danger-ghost" id="resetBtn">Delete All</button>
       </div>
 
-      <p class="setting-note">Your main data is stored in this browser (localStorage). If browser data is cleared, restore it via <b>Import</b> using the automatic backup file.</p>
+      <p class="setting-note" id="storageNote">Your main data is stored in this browser (localStorage). If browser data is cleared, restore it via <b>Import</b> using the automatic backup file.</p>
     </div>
   </div>
 </dialog>
@@ -428,6 +432,82 @@
       <div class="cat-list" id="catList"></div>
     </div>
     <div class="dialog-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn primary" data-close>Done</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ============ DIALOG: LOGIN / DAFTAR ============ -->
+<dialog id="loginDialog" class="dialog narrow">
+  <form id="loginForm" class="dialog-form" novalidate>
+    <div class="dialog-head">
+      <h2 id="loginTitle">Sign in</h2>
+      <button type="button" class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="dialog-body">
+      <p class="setting-note" id="loginNote">Anyone with the link can view. Sign in to add or edit (if the super admin has given you access).</p>
+      <label class="field"><span>Email <span class="req">*</span></span>
+        <input type="email" id="loginEmail" required data-label="Email" autocomplete="email" maxlength="254">
+      </label>
+      <label class="field" id="loginPassField"><span>Password <span class="req">*</span></span>
+        <input type="password" id="loginPass" required data-label="Password" autocomplete="current-password" minlength="8" maxlength="72">
+      </label>
+      <div class="login-links">
+        <button type="button" class="link-btn" id="loginModeBtn">No account yet? Create one</button>
+        <button type="button" class="link-btn" id="forgotBtn">Forgot password?</button>
+      </div>
+    </div>
+    <div class="dialog-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="loginSubmitBtn">Sign in</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ============ DIALOG: AKUN ============ -->
+<dialog id="accountDialog" class="dialog narrow">
+  <form id="passwordForm" class="dialog-form" novalidate>
+    <div class="dialog-head">
+      <h2>👤 Account</h2>
+      <button type="button" class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="dialog-body">
+      <div class="account-info">
+        <div><span class="k">Email</span><b id="accEmail"></b></div>
+        <div><span class="k">Access</span><span id="accRole"></span></div>
+      </div>
+      <p class="setting-note" id="accRoleNote"></p>
+      <div class="form-section">Change password</div>
+      <label class="field"><span>New password <span class="req">*</span></span>
+        <input type="password" id="newPass" required data-label="New password" autocomplete="new-password" minlength="8" maxlength="72">
+      </label>
+      <label class="field"><span>Repeat new password <span class="req">*</span></span>
+        <input type="password" id="newPass2" required data-label="Repeat new password" autocomplete="new-password" minlength="8" maxlength="72">
+      </label>
+    </div>
+    <div class="dialog-foot">
+      <button type="button" class="btn danger-ghost" id="signOutBtn">Sign out</button>
+      <span class="spacer"></span>
+      <button type="submit" class="btn primary" id="passSaveBtn">Save password</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ============ DIALOG: KELOLA USER (SUPER ADMIN) ============ -->
+<dialog id="usersDialog" class="dialog">
+  <div class="dialog-form">
+    <div class="dialog-head">
+      <h2>👥 Users & Access <span class="badge gray" id="userCount">0</span></h2>
+      <button type="button" class="icon-btn" data-close>✕</button>
+    </div>
+    <div class="dialog-body">
+      <p class="setting-note">New accounts start as <b>Viewer</b>. Choose a role to give access. <b>Editor</b>: add & edit · <b>Admin</b>: editor + delete, import & backups · only the <b>Super admin</b> can manage users.</p>
+      <div class="user-list" id="userList"></div>
+    </div>
+    <div class="dialog-foot">
+      <button type="button" class="btn ghost" id="usersRefreshBtn">↻ Refresh</button>
       <span class="spacer"></span>
       <button type="button" class="btn primary" data-close>Done</button>
     </div>
@@ -464,6 +544,8 @@
 <!-- Notifikasi (popover agar tampil di atas popup lain) -->
 <div id="notifications" class="notif-stack" popover="manual" aria-live="polite"></div>
 
+<script src="config.js"></script>
+<script src="vendor/supabase.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

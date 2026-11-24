@@ -1,3 +1,5 @@
-# Jangan ikut di-deploy: berisi data pribadi (file backup)
+# Jangan ikut di-deploy: berisi data pribadi (file backup) & file setup
 Backup WorkTrack/
-*.json
+worktrack*.json
+supabase/
+google-drive-backup.gs

@@ -16,8 +16,6 @@
       <button type="button" class="backup-pill need-admin" id="backupPill" hidden></button>
       <button type="button" class="backup-pill need-admin cloud-only" id="srvPill" hidden></button>
       <span class="sync-pill cloud-only" id="syncPill" hidden></span>
-      <button type="button" class="btn ghost small need-edit cloud-only" id="activityBtn" title="Who changed what, and when">🕘 <span class="btn-label">Activity</span></button>
-      <button type="button" class="btn ghost small need-super cloud-only" id="usersBtn" title="Manage users & roles">👥 Users</button>
       <button type="button" class="btn primary small cloud-only" id="signInBtn" hidden>Sign in</button>
       <button type="button" class="account-btn cloud-only" id="accountBtn" hidden title="Account"></button>
       <button class="icon-btn settings-btn" id="settingsBtn" title="Settings & data">⚙️</button>
@@ -351,6 +349,22 @@
           <div class="cat-summary" id="catSummary"></div>
         </div>
         <button class="btn primary need-edit" id="manageCatBtn">🏷️ Manage Categories</button>
+      </div>
+
+      <div class="setting-group-title need-edit cloud-only">Team</div>
+      <div class="setting-row need-edit cloud-only">
+        <div>
+          <div class="setting-title">Activity log</div>
+          <div class="setting-desc">Who added, edited or deleted tasks, meetings and categories, and when.</div>
+        </div>
+        <button type="button" class="btn ghost" id="activityBtn">🕘 Activity</button>
+      </div>
+      <div class="setting-row need-super cloud-only">
+        <div>
+          <div class="setting-title">Users & access</div>
+          <div class="setting-desc">See who has an account and choose who can view, edit or manage data.</div>
+        </div>
+        <button type="button" class="btn ghost" id="usersBtn">👥 Users</button>
       </div>
 
       <div class="setting-group-title need-admin">Backup</div>

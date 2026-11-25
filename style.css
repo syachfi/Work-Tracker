@@ -726,7 +726,6 @@ body.cloud:not(.can-edit) .day { cursor: default; }
 
 @media (max-width: 640px) {
   .account-btn .acc-mail { display: none; }
-  #activityBtn .btn-label { display: none; }
   /* Tombol header turun ke baris berikutnya, bukan melebar keluar layar */
   .appbar-top { gap: 8px; }
   .appbar-actions { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }

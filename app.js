@@ -2229,7 +2229,7 @@
     }).join('') || '<div class="empty">No accounts yet.</div>';
   }
 
-  $('#usersBtn').addEventListener('click', () => { usersDialog.showModal(); loadUsers(); });
+  $('#usersBtn').addEventListener('click', () => { settingsDialog.close(); usersDialog.showModal(); loadUsers(); });
   $('#usersRefreshBtn').addEventListener('click', loadUsers);
   $('#userList').addEventListener('change', async e => {
     const sel = e.target.closest('select[data-uid]');
@@ -2502,6 +2502,7 @@
 
   $('#activityBtn').addEventListener('click', () => {
     act.rows = [];
+    settingsDialog.close();
     activityDrawer.showModal();
     loadActivity();
   });

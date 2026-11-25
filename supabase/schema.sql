@@ -234,6 +234,73 @@ grant execute on function public.new_backup_token() to authenticated;
 revoke execute on function public.log_backup(text, boolean, int, int, int, text) from public;
 grant execute on function public.log_backup(text, boolean, int, int, int, text) to anon, authenticated;
 
+-- ---------- Activity log (who added / changed / deleted what, and when) ----------
+-- Written by a database trigger, so it records every change from every editor and
+-- cannot be faked from the browser. Readable by editors and above. Kept 180 days.
+create table if not exists public.activity_log (
+  id          bigint generated always as identity primary key,
+  at          timestamptz not null default now(),
+  user_id     uuid,
+  user_email  text,
+  action      text not null check (action in ('create', 'update', 'delete')),
+  entity      text not null check (entity in ('task', 'meeting', 'category')),
+  entity_id   text not null,
+  title       text,
+  changes     jsonb   -- update only: { field: {from, to} } for short values, { field: null } for long text
+);
+create index if not exists activity_log_at on public.activity_log (at desc);
+alter table public.activity_log enable row level security;
+drop policy if exists "editor read activity" on public.activity_log;
+create policy "editor read activity" on public.activity_log
+  for select to authenticated using (public.my_role() in ('editor', 'admin', 'super_admin'));
+revoke insert, update, delete, truncate, references, trigger on public.activity_log from anon, authenticated;
+grant select on public.activity_log to authenticated;
+
+create or replace function public.log_activity()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare
+  d  jsonb := case when tg_op = 'DELETE' then old.data else new.data end;
+  ch jsonb;
+begin
+  if tg_op = 'UPDATE' then
+    if old.data = new.data then return null; end if;   -- saved without real changes
+    select jsonb_object_agg(k, case
+             when coalesce(jsonb_typeof(o), 'null') not in ('object', 'array')
+              and coalesce(jsonb_typeof(n), 'null') not in ('object', 'array')
+              and length(coalesce(o #>> '{}', '')) <= 80 and length(coalesce(n #>> '{}', '')) <= 80
+             then jsonb_build_object('from', o, 'to', n)
+           end)
+      into ch
+      from (select k, old.data -> k as o, new.data -> k as n
+              from (select jsonb_object_keys(old.data) union select jsonb_object_keys(new.data)) ks(k)) x
+     where o is distinct from n;
+  end if;
+
+  insert into public.activity_log (user_id, user_email, action, entity, entity_id, title, changes)
+  values (
+    auth.uid(),
+    (select email from public.profiles where id = auth.uid()),
+    case tg_op when 'INSERT' then 'create' when 'UPDATE' then 'update' else 'delete' end,
+    case tg_table_name when 'tasks' then 'task' when 'meetings' then 'meeting' else 'category' end,
+    case when tg_op = 'DELETE' then old.id else new.id end,
+    left(coalesce(nullif(d ->> 'title', ''), d ->> 'name'), 150),
+    ch);
+
+  delete from public.activity_log where at < now() - interval '180 days';
+  return null;
+end $$;
+revoke execute on function public.log_activity() from public, anon, authenticated;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['categories', 'tasks', 'meetings'] loop
+    execute format('drop trigger if exists log_%1$s on public.%1$I', t);
+    execute format('create trigger log_%1$s after insert or update or delete on public.%1$I
+                    for each row execute function public.log_activity()', t);
+  end loop;
+end $$;
+
 -- ---------- Live updates (other people see changes without refreshing) ----------
 do $$
 declare t text;

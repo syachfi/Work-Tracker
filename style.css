@@ -415,6 +415,38 @@ body[data-type="task"] .only-meeting { display: none !important; }
 .link-btn:hover { text-decoration: underline; }
 #printArea { display: none; }
 
+/* ---------- Panel samping: log aktivitas ---------- */
+.drawer {
+  border: 0; padding: 0; margin: 0 0 0 auto; height: 100vh; max-height: 100vh;
+  width: min(420px, 100vw); background: var(--surface); box-shadow: -16px 0 40px rgba(16, 24, 40, .18);
+}
+.drawer[open] { animation: drawer-in .2s ease-out; }
+@keyframes drawer-in { from { transform: translateX(40px); opacity: 0; } }
+.drawer::backdrop { background: rgba(22, 26, 46, .35); }
+.drawer-inner { display: flex; flex-direction: column; height: 100%; }
+.drawer-tools { display: flex; gap: 8px; align-items: center; padding: 12px 22px; border-bottom: 1px solid var(--border); }
+.drawer-tools select { flex: 1; border: 1px solid var(--border); border-radius: 9px; padding: 7px 10px; background: var(--surface); }
+.drawer-body { flex: 1; overflow: auto; padding: 6px 14px 20px; scrollbar-width: thin; }
+.act-day {
+  position: sticky; top: 0; z-index: 1; background: var(--surface); padding: 12px 8px 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted);
+}
+.act-item { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; padding: 9px 8px; border-radius: 10px; }
+.act-item:hover { background: var(--surface-2); }
+.act-icon { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; }
+.act-item.create .act-icon { background: var(--low-soft); color: var(--low); }
+.act-item.update .act-icon { background: var(--primary-soft); color: var(--primary); }
+.act-item.delete .act-icon { background: var(--high-soft); color: var(--high); }
+.act-line { line-height: 1.45; overflow-wrap: anywhere; }
+.act-who { font-weight: 600; }
+.act-open { font-size: inherit; text-align: left; }
+.act-changes { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.act-chg s { color: #a3a9ba; }
+.act-chg b { color: var(--text); font-weight: 600; }
+.act-time { font-size: 12px; color: var(--muted); white-space: nowrap; padding-top: 2px; }
+.act-empty { padding: 30px 12px; text-align: center; color: var(--muted); line-height: 1.5; }
+.act-more { display: block; margin: 12px auto 0; }
+
 /* ---------- Dialog ---------- */
 .dialog {
   border: 0; border-radius: 16px; padding: 0; width: min(560px, calc(100vw - 24px));
@@ -694,6 +726,11 @@ body.cloud:not(.can-edit) .day { cursor: default; }
 
 @media (max-width: 640px) {
   .account-btn .acc-mail { display: none; }
+  #activityBtn .btn-label { display: none; }
+  /* Tombol header turun ke baris berikutnya, bukan melebar keluar layar */
+  .appbar-top { gap: 8px; }
+  .appbar-actions { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+  .backup-pill { max-width: 60vw; }
 }
 
 /* ================= KARTU BACKUP (Settings) ================= */

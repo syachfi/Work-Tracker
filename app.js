@@ -2065,7 +2065,7 @@
     renderAccount();
     renderSyncPill();
     if (changed) {
-      if (!can('edit')) [taskDialog, meetingDialog, catDialog].forEach(d => d.open && d.close());
+      if (!can('edit')) [taskDialog, meetingDialog, catDialog, $('#activityDrawer')].forEach(d => d.open && d.close());
       refreshAfterChange();
       offerLocalUpload();
       loadServerBackup();
@@ -2385,6 +2385,138 @@
   });
   settingsDialog.addEventListener('close', () => { $('#srvKeyBox').hidden = true; $('#srvKey').value = ''; });
 
+  /* ================= LOG AKTIVITAS (panel samping) ================= */
+  // Dicatat oleh trigger database (tabel activity_log). Bisa dibaca editor ke atas.
+  const activityDrawer = $('#activityDrawer');
+  const ACT_PAGE = 50;
+  const act = { rows: [], more: false, busy: false, error: null, timer: null };
+  const ACT_ENTITY = { task: 'task', meeting: 'meeting', category: 'category' };
+  const ACT_VERB = { create: 'added', update: 'edited', delete: 'deleted' };
+  const ACT_ICON = { create: '＋', update: '✎', delete: '🗑' };
+  const FIELD_LABEL = {
+    title: 'Title', name: 'Name', color: 'Color', date: 'Date', time: 'Time', priority: 'Priority', status: 'Status',
+    categoryId: 'Category', desc: 'Description', start: 'Start', end: 'End', type: 'Type', location: 'Location',
+    organizer: 'Organizer', notetaker: 'Note-taker', participants: 'Participants', objective: 'Objective',
+    agenda: 'Agenda', minutes: 'Minutes', decisions: 'Decisions', nextMeeting: 'Next meeting', actionItems: 'Action items'
+  };
+
+  function actValue(row, field, v) {
+    if (v === null || v === undefined || v === '') return '—';
+    if (field === 'status') return (row.entity === 'meeting' ? MSTATUS : STATUS)[v] || v;
+    if (field === 'priority') return PRIORITY[v]?.label || v;
+    if (field === 'type') return MTYPE[v] || v;
+    if (field === 'categoryId') return state.categories.find(c => c.id === v)?.name || '(removed category)';
+    if ((field === 'date' || field === 'nextMeeting') && DATE_RE.test(v)) return fmtShort(v);
+    return String(v);
+  }
+
+  function actChanges(row) {
+    if (row.action !== 'update' || !row.changes) return '';
+    const parts = Object.entries(row.changes)
+      .filter(([f]) => f !== 'id' && f !== 'category')
+      .map(([f, c]) => {
+        const label = FIELD_LABEL[f] || f;
+        if (!c) return `<span class="act-chg">${esc(label)} edited</span>`;
+        return `<span class="act-chg">${esc(label)}: <s>${esc(actValue(row, f, c.from))}</s> → <b>${esc(actValue(row, f, c.to))}</b></span>`;
+      });
+    return parts.length ? `<div class="act-changes">${parts.join('')}</div>` : '';
+  }
+
+  function actWho(row) {
+    if (row.user_id && row.user_id === auth.user?.id) return 'You';
+    if (row.user_email) return row.user_email;
+    return row.user_id ? 'Removed account' : 'System';
+  }
+
+  function actDayLabel(d) {
+    const key = toKey(d);
+    if (key === todayKey()) return 'Today';
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    if (key === toKey(y)) return 'Yesterday';
+    return `${DAYS[d.getDay()]}, ${fmtShort(key)}`;
+  }
+
+  function renderActivity() {
+    const box = $('#activityList');
+    if (act.error) {
+      box.innerHTML = `<div class="act-empty">${act.error === 'nodb'
+        ? 'The activity log is not set up yet. Run the latest <b>supabase/schema.sql</b> in Supabase → SQL Editor.'
+        : 'Could not load the activity right now. Try <b>↻ Refresh</b>.'}</div>`;
+      return;
+    }
+    if (!act.rows.length) {
+      box.innerHTML = `<div class="act-empty">${act.busy ? 'Loading activity...' : 'No activity yet. Changes to tasks, meetings and categories will appear here.'}</div>`;
+      return;
+    }
+    let html = '', lastDay = '';
+    for (const r of act.rows) {
+      const d = new Date(r.at);
+      const day = actDayLabel(d);
+      if (day !== lastDay) { html += `<div class="act-day">${esc(day)}</div>`; lastDay = day; }
+      const exists = r.action !== 'delete' && (r.entity === 'task' ? getTask(r.entity_id) : r.entity === 'meeting' ? getMeeting(r.entity_id) : null);
+      const title = esc(r.title || '(untitled)');
+      html += `<div class="act-item ${r.action}">
+          <span class="act-icon" aria-hidden="true">${ACT_ICON[r.action]}</span>
+          <div class="act-main">
+            <div class="act-line"><b class="act-who">${esc(actWho(r))}</b> ${ACT_VERB[r.action]} ${ACT_ENTITY[r.entity]}
+              ${exists ? `<button type="button" class="link-btn act-open" data-entity="${r.entity}" data-id="${esc(r.entity_id)}">${title}</button>` : `<b>${title}</b>`}</div>
+            ${actChanges(r)}
+          </div>
+          <time class="act-time" datetime="${esc(r.at)}" title="${esc(d.toLocaleString())}">${pad(d.getHours())}:${pad(d.getMinutes())}</time>
+        </div>`;
+    }
+    if (act.more) html += `<button type="button" class="btn ghost small act-more" id="activityMore"${act.busy ? ' disabled' : ''}>${act.busy ? 'Loading...' : 'Load more'}</button>`;
+    box.innerHTML = html;
+  }
+
+  async function loadActivity({ append = false } = {}) {
+    if (!CLOUD || !can('edit') || act.busy) return;
+    act.busy = true;
+    if (!append) act.error = null;
+    renderActivity();
+    try {
+      let q = sb.from('activity_log').select('id,at,user_id,user_email,action,entity,entity_id,title,changes')
+        .order('at', { ascending: false }).order('id', { ascending: false });
+      const entity = $('#activityFilter').value;
+      if (entity) q = q.eq('entity', entity);
+      const from = append ? act.rows.length : 0;
+      const { data, error } = await q.range(from, from + ACT_PAGE - 1);
+      if (error) throw error;
+      act.rows = append ? act.rows.concat(data) : data;
+      act.more = data.length === ACT_PAGE;
+    } catch (err) {
+      console.error(err);
+      act.error = err?.code === 'PGRST205' ? 'nodb' : 'unknown';
+    } finally {
+      act.busy = false;
+      renderActivity();
+    }
+  }
+
+  // Dipanggil saat ada perubahan data (realtime): perbarui panel jika sedang terbuka
+  function scheduleActivity() {
+    if (!activityDrawer.open) return;
+    clearTimeout(act.timer);
+    act.timer = setTimeout(() => loadActivity(), 900);
+  }
+
+  $('#activityBtn').addEventListener('click', () => {
+    act.rows = [];
+    activityDrawer.showModal();
+    loadActivity();
+  });
+  $('#activityRefreshBtn').addEventListener('click', () => loadActivity());
+  $('#activityFilter').addEventListener('change', () => { act.rows = []; loadActivity(); });
+  $('#activityList').addEventListener('click', e => {
+    if (e.target.closest('#activityMore')) return loadActivity({ append: true });
+    const b = e.target.closest('.act-open');
+    if (!b) return;
+    activityDrawer.close();
+    if (b.dataset.entity === 'meeting') return openMeetingDetail(b.dataset.id);
+    const t = getTask(b.dataset.id);
+    if (t) { const d = parseKey(t.date); goMonth(d.getFullYear(), d.getMonth()); openTaskForm(t); }
+  });
+
   async function initCloud() {
     $('#storageNote').textContent = 'Data is stored online and anyone with the link can view it. Only signed-in editors and admins can change it.';
     renderSyncPill();
@@ -2403,7 +2535,7 @@
     window.addEventListener('focus', () => { if (auth.user) refreshRole(); });
     const ok = await runWithLoading('Loading data...', () => reloadCloud());
     sb.channel('worktrack-data')
-      .on('postgres_changes', { event: '*', schema: 'public' }, scheduleReload)
+      .on('postgres_changes', { event: '*', schema: 'public' }, () => { scheduleReload(); scheduleActivity(); })
       .subscribe();
     if (ok) {
       initBackup();

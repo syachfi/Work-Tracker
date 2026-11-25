@@ -1,10 +1,11 @@
 /**
- * WorkTrack → Backup HARIAN otomatis dari Supabase ke Google Drive (Google Apps Script)
+ * WorkTrack → Backup otomatis dari Supabase ke Google Drive (Google Apps Script)
  *
- * Setiap hari (default ± pukul 23.00 WIB) script ini mengambil SEMUA data WorkTrack langsung
- * dari database Supabase dan menyimpannya ke folder Google Drive Anda:
- *  - worktrack-backup.json      : file utama, selalu berisi data terbaru.
- *  - worktrack-YYYY-MM-DD.json  : salinan harian, disimpan KEEP_DAYS hari.
+ * 5× sehari (± pukul 01.00, 06.00, 12.00, 15.00 dan 21.00 WIB — lihat JAM_BACKUP) script ini
+ * mengambil SEMUA data WorkTrack langsung dari database Supabase dan menyimpannya ke folder
+ * Google Drive Anda:
+ *  - worktrack-backup.json         : file utama, selalu berisi data terbaru.
+ *  - worktrack-YYYY-MM-DD-HH.json  : salinan tiap jadwal (HH = jam), disimpan KEEP_DAYS hari.
  * Berjalan di server Google — tidak perlu ada yang membuka website.
  * Format file sama dengan Export, jadi bisa dipulihkan lewat ⚙️ Settings → Import.
  *
@@ -19,12 +20,13 @@
  *  4. Di toolbar pilih fungsi "pasangJadwal" → klik Run → izinkan akses
  *     (Review permissions → pilih akun → Advanced → Go to project (unsafe) → Allow).
  *     Ini wajar untuk script buatan sendiri. Backup pertama langsung dibuat saat itu juga.
- *  5. Cek folder Drive: harus ada worktrack-backup.json dan worktrack-<tanggal hari ini>.json.
+ *  5. Cek folder Drive: harus ada worktrack-backup.json dan worktrack-<tanggal hari ini>-<jam>.json.
  *     Di website: ⚙️ Settings → Backup harus menunjukkan "● Active".
  *
  * Jika backup gagal, Google otomatis mengirim email pemberitahuan ke akun Anda,
  * dan website menampilkan "Backup failed".
  * Untuk menghentikan: jalankan fungsi "hapusJadwal".
+ * Setelah mengubah JAM_BACKUP, jalankan "pasangJadwal" lagi agar jadwal lama diganti.
  */
 
 const SUPABASE_URL = 'https://chpxkngvuhrpblcsmkyo.supabase.co';
@@ -32,12 +34,12 @@ const SUPABASE_KEY = 'sb_publishable_sVOlHCe58TaO4f5PCntMKQ_mftUZOYZ'; // publis
 const FOLDER_ID = 'GANTI_DENGAN_ID_FOLDER';
 const BACKUP_TOKEN = 'GANTI_DENGAN_BACKUP_KEY';   // dari WorkTrack: Settings → Backup → Create backup key (RAHASIA)
 const TIMEZONE = 'Asia/Jakarta';            // WIB
-const JAM_BACKUP = 23;                      // jam backup harian (0–23)
+const JAM_BACKUP = [1, 6, 12, 15, 21];      // jam-jam backup setiap hari (0–23, WIB)
 const KEEP_DAYS = 30;                       // salinan harian lebih lama dari ini dipindah ke Trash
 const MAIN_FILE = 'worktrack-backup.json';
 const TABLES = ['categories', 'tasks', 'meetings'];
 
-// Dijalankan otomatis setiap hari oleh jadwal. Hasilnya (berhasil/gagal) dilaporkan ke website.
+// Dijalankan otomatis pada setiap jam di JAM_BACKUP. Hasilnya (berhasil/gagal) dilaporkan ke website.
 function backupHarian() {
   let data;
   try {
@@ -94,9 +96,9 @@ function buatBackup() {
   }
 
   const content = JSON.stringify(data, null, 2);
-  const today = Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd');
+  const stamp = Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd-HH');
   upsert(folder, MAIN_FILE, content);
-  upsert(folder, 'worktrack-' + today + '.json', content);
+  upsert(folder, 'worktrack-' + stamp + '.json', content);
   cleanup(folder);
   Logger.log('Backup OK: %s task, %s meeting, %s kategori → %s',
     data.tasks.length, data.meetings.length, data.categories.length, folder.getName());
@@ -130,24 +132,27 @@ function cleanup(folder) {
   const files = folder.getFiles();
   while (files.hasNext()) {
     const f = files.next();
-    const m = f.getName().match(/^worktrack-(\d{4})-(\d{2})-(\d{2})\.json$/);
+    const m = f.getName().match(/^worktrack-(\d{4})-(\d{2})-(\d{2})(-\d{2})?\.json$/);
     if (m && new Date(+m[1], +m[2] - 1, +m[3]) < limit) f.setTrashed(true);
   }
 }
 
-// Jalankan SEKALI dari editor: memasang jadwal harian + langsung membuat backup pertama
+// Jalankan SEKALI dari editor: memasang semua jadwal + langsung membuat backup pertama
 function pasangJadwal() {
   hapusJadwal();
-  ScriptApp.newTrigger('backupHarian').timeBased().everyDays(1).atHour(JAM_BACKUP).inTimezone(TIMEZONE).create();
+  JAM_BACKUP.forEach(function (jam) {
+    ScriptApp.newTrigger('backupHarian').timeBased().everyDays(1).atHour(jam).inTimezone(TIMEZONE).create();
+  });
   const hasil = backupHarian();
-  Logger.log('Jadwal aktif: backup setiap hari sekitar pukul %s.00 WIB.', JAM_BACKUP);
+  Logger.log('Jadwal aktif: backup setiap hari sekitar pukul %s WIB.',
+    JAM_BACKUP.map(function (j) { return ('0' + j).slice(-2) + '.00'; }).join(', '));
   if (!hasil.terlapor) {
     throw new Error('Backup BERHASIL disimpan ke Drive dan jadwal sudah aktif, tetapi statusnya belum tampil di website. ' +
       'Cek BACKUP_TOKEN (buat key baru di WorkTrack: Settings → Backup → Create backup key), Save, lalu jalankan pasangJadwal lagi.');
   }
 }
 
-// Menghentikan backup harian
+// Menghentikan semua jadwal backup
 function hapusJadwal() {
   ScriptApp.getProjectTriggers()
     .filter(function (t) { return t.getHandlerFunction() === 'backupHarian'; })

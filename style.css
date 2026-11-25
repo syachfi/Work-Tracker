@@ -435,6 +435,15 @@ body[data-type="task"] .only-meeting { display: none !important; }
   border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; font-weight: 400; background: var(--surface); width: 100%;
 }
 .field textarea { resize: vertical; line-height: 1.5; }
+.pass-wrap { position: relative; display: block; }
+.pass-wrap input { padding-right: 42px; }
+.pass-toggle {
+  position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
+  width: 34px; height: 30px; border: 0; border-radius: 7px; background: transparent;
+  cursor: pointer; font-size: 16px; line-height: 1; display: grid; place-items: center; opacity: .7;
+}
+.pass-toggle:hover, .pass-toggle:focus-visible { opacity: 1; background: var(--surface-2); }
+.pass-wrap input::-ms-reveal { display: none; } /* sembunyikan ikon bawaan Edge agar tidak dobel */
 .field input:focus, .field select:focus, .field textarea:focus, .toolbar input:focus, .toolbar select:focus {
   outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79, 70, 229, .15);
 }

@@ -354,13 +354,13 @@
 
       <div class="setting-group-title need-admin">Backup</div>
 
-      <!-- Backup harian otomatis (server Google) -->
+      <!-- Backup otomatis 5× sehari (server Google) -->
       <div class="backup-card need-admin cloud-only">
         <div class="bc-head">
           <span class="bc-icon">🛡️</span>
           <div class="bc-title">
-            <div class="setting-title">Daily backup to Google Drive</div>
-            <div class="setting-desc">Runs by itself every night on Google's servers and saves everything — including changes made by other editors.</div>
+            <div class="setting-title">Automatic backup to Google Drive</div>
+            <div class="setting-desc">Runs by itself 5 times a day (01:00, 06:00, 12:00, 15:00, 21:00) on Google's servers and saves everything — including changes made by other editors.</div>
           </div>
           <span class="bc-status" id="srvStatus"></span>
         </div>
@@ -407,7 +407,7 @@
       <div class="setting-row need-admin">
         <div>
           <div class="setting-title">Import data</div>
-          <div class="setting-desc">Restore from a backup file (a daily copy from Google Drive or an Export). Current data will be <b>replaced</b>.</div>
+          <div class="setting-desc">Restore from a backup file (a copy from Google Drive or an Export). Current data will be <b>replaced</b>.</div>
         </div>
         <label class="btn ghost">⬆ Import
           <input type="file" id="importInput" accept=".json,application/json" hidden>

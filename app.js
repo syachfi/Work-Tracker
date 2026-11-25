@@ -1692,7 +1692,7 @@
       saving: ['', '💾 Saving...', ''],
       ok: ['ok', `💾 File ✓ ${last}`, `Backup file saved: ${backup.handle?.name}`]
     };
-    // Mode online: backup utama = backup harian di server, jadi tanda di header hanya muncul jika perlu tindakan
+    // Mode online: backup utama = backup otomatis di server, jadi tanda di header hanya muncul jika perlu tindakan
     pill.hidden = st === 'unsupported' || (CLOUD && st !== 'paused' && st !== 'error');
     if (PILL[st]) {
       const [cls, text, title] = PILL[st];
@@ -2090,6 +2090,33 @@
     $('#forgotBtn').hidden = mode !== 'signin';
     clearInvalid(loginDialog);
   }
+  /* ---------- Tombol tampilkan/sembunyikan password ---------- */
+  const setPassVisible = (btn, show) => {
+    btn.previousElementSibling.type = show ? 'text' : 'password';
+    btn.textContent = show ? '🙈' : '👁';
+    btn.title = show ? 'Hide password' : 'Show password';
+    btn.setAttribute('aria-label', btn.title);
+    btn.setAttribute('aria-pressed', show);
+  };
+  $$('input[type="password"]').forEach(input => {
+    const wrap = document.createElement('span');
+    wrap.className = 'pass-wrap';
+    input.replaceWith(wrap);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pass-toggle';
+    wrap.append(input, btn);
+    setPassVisible(btn, false);
+    btn.addEventListener('click', () => {
+      setPassVisible(btn, input.type === 'password');
+      input.focus();
+    });
+  });
+  // Saat dialog ditutup, password kembali disembunyikan
+  document.addEventListener('close', e => {
+    $$('.pass-toggle', e.target).forEach(btn => setPassVisible(btn, false));
+  }, true);
+
   function openLogin(mode = 'signin') {
     $('#loginForm').reset();
     setLoginMode(mode);
@@ -2237,7 +2264,7 @@
 
   /* ================= STATUS BACKUP HARIAN (Google Apps Script → Drive) ================= */
   // Script backup melapor ke tabel backup_log setelah setiap backup. Hanya admin yang bisa membacanya.
-  const LATE_MS = 26 * 3600e3; // lebih dari ± 1 hari tanpa backup = terlambat
+  const LATE_MS = 8 * 3600e3; // jeda terpanjang antar jadwal 6 jam (06→12); > 8 jam tanpa backup = terlambat
   const srv = { state: 'loading', last: null, lastOk: null, busy: false };
 
   async function loadServerBackup() {
@@ -2279,9 +2306,9 @@
 
     const V = {
       loading: ['', 'Checking...', 'Checking the latest backup...', '', ''],
-      ok: ['ok', '● Active', `Last backup: <b>${srv.last && when(srv.last)}</b> · ${srv.last && counts(srv.last)}.<br>Runs every night around 23:00.`,
+      ok: ['ok', '● Active', `Last backup: <b>${srv.last && when(srv.last)}</b> · ${srv.last && counts(srv.last)}.<br>Runs every day around 01:00, 06:00, 12:00, 15:00 and 21:00.`,
         'ok', `🛡 Backup ✓ ${srv.last && when(srv.last)}`],
-      late: ['warn', 'Late', `<span class="txt-warn">No backup in over a day.</span>${lastOkLine}<br>The schedule may have stopped — open the Apps Script and run <b>pasangJadwal</b> again.`,
+      late: ['warn', 'Late', `<span class="txt-warn">No backup in over 8 hours.</span>${lastOkLine}<br>The schedule may have stopped — open the Apps Script and run <b>pasangJadwal</b> again.`,
         'warn', '🛡 Backup late'],
       error: ['error', 'Failed', `<span class="txt-danger">The last backup (${srv.last && when(srv.last)}) failed: ${esc(srv.last?.message || 'unknown error')}</span>${lastOkLine}`,
         'error', '🛡 Backup failed'],
@@ -2298,11 +2325,36 @@
     pill.hidden = !pillText;
     pill.className = `backup-pill need-admin cloud-only ${pillCls}`;
     pill.textContent = pillText;
-    pill.title = 'Daily backup to Google Drive — click for details';
+    pill.title = 'Automatic backup to Google Drive — click for details';
   }
 
   $('#srvPill').addEventListener('click', () => openSettings());
-  $('#srvRefreshBtn').addEventListener('click', loadServerBackup);
+  // Tombol "Check status": tampilkan proses + hasilnya lewat notifikasi
+  $('#srvRefreshBtn').addEventListener('click', e => withButtonLoading(e.currentTarget, async () => {
+    if (srv.busy) return;
+    srv.state = 'loading';
+    renderServerBackup();
+    await loadServerBackup();
+    const r = srv.last;
+    const since = r => {
+      const min = Math.max(0, Math.round((Date.now() - new Date(r.ran_at).getTime()) / 60000));
+      return min < 60 ? `${plural(min, 'minute')} ago` : min < 2880 ? `${plural(Math.round(min / 60), 'hour')} ago` : `${plural(Math.floor(min / 1440), 'day')} ago`;
+    };
+    const at = r => `${fmtStamp(new Date(r.ran_at).getTime())} (${since(r)})`;
+    switch (srv.state) {
+      case 'ok':
+        return notify('success', `Last backup ran ${at(r)} and succeeded: ${plural(r.tasks ?? 0, 'task')}, ${plural(r.meetings ?? 0, 'meeting')}.`, 'Backup is running');
+      case 'late':
+        return notify('warning', `The last backup was ${at(r)}. No backup has run in over 8 hours — open the Apps Script and run pasangJadwal again.`, 'Backup is late');
+      case 'error':
+        return notify('error', `The backup at ${at(r)} failed: ${r.message || 'unknown error'}${srv.lastOk ? `. Last successful backup: ${at(srv.lastOk)}.` : '.'}`, 'Backup failed');
+      case 'none':
+      case 'nodb':
+        return notify('warning', 'No backup has been reported yet. Follow the setup steps in this panel.', 'Backup not set up');
+      default:
+        return notify('error', 'Could not check the backup status right now. Check your connection and try again.', 'Check failed');
+    }
+  }));
   $('#srvKeyBtn').addEventListener('click', async () => {
     const yes = await confirmBox({
       title: 'Create a new backup key?',
@@ -2357,7 +2409,7 @@
       initBackup();
       offerLocalUpload();
     }
-    setInterval(loadServerBackup, 30 * 60000); // cek status backup harian tiap 30 menit
+    setInterval(loadServerBackup, 30 * 60000); // cek status backup otomatis tiap 30 menit
   }
 
   /* ================= INIT ================= */
